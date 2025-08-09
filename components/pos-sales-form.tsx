@@ -72,12 +72,11 @@ export default function POSSalesForm() {
     const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null)
     const [creditApplied, setCreditApplied] = useState(0)
 
-    const isAdmin = user?.role === "admin"
+    const isAdmin = user?.role?.trim().toLowerCase() === "admin"
     const totalAmount = cart.reduce((sum, item) => sum + item.total, 0)
     const amountDue = totalAmount - creditApplied;
     const paidAmountNum = Number.parseFloat(paidAmount) || 0
     const changeAmount = paidAmountNum > amountDue ? paidAmountNum - amountDue : 0
-
 
     // Effects
     useEffect(() => {
@@ -246,16 +245,15 @@ export default function POSSalesForm() {
                     }
                 }
 
-                // THIS IS THE FIX: Change is ADDED to the balance, not subtracted
                 if (changeAmount > 0 && paymentMethod !== 'credit') {
                     await supabase.from("customer_credits").insert({
                         customer_id: selectedCustomer.id,
                         amount: changeAmount,
                         type: 'credit',
-                        description: `Change from sale ${saleNumber}`,
+                        description: `Overpayment/change from sale ${saleNumber}`,
                         sale_id: saleData.id,
                     });
-                    newBalance += changeAmount; // Corrected from -= to +=
+                    newBalance += changeAmount;
                 }
 
                 if (newBalance !== (customerData?.credit_balance ?? 0)) {
