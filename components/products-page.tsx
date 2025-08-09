@@ -20,9 +20,7 @@ interface Product {
   description: string | null
   category_id: string | null
   brand_id: string | null
-  price: number
   selling_price: number
-  cost: number
   cost_price: number | null
   stock_quantity: number
   min_stock_level: number
@@ -79,8 +77,8 @@ export default function ProductsPage() {
     description: "",
     category_id: "",
     brand_id: "",
-    price: "",
-    cost: "",
+    selling_price: "",
+    cost_price: "",
     stock_quantity: "",
     min_stock_level: "10",
     max_stock_level: "0",
@@ -115,7 +113,7 @@ export default function ProductsPage() {
         console.error("Error fetching products:", error)
         setProducts([])
     } else {
-        setProducts(data || [])
+        setProducts((data as Product[]) || [])
     }
   }
 
@@ -171,19 +169,14 @@ export default function ProductsPage() {
         newImageUrl = urlData.publicUrl;
       }
 
-      const priceValue = Number.parseFloat(formData.price) || 0
-      const costValue = Number.parseFloat(formData.cost) || 0
-
       const productData = {
         name: formData.name.trim(),
         sku: formData.sku.trim(),
         description: formData.description.trim() || null,
         category_id: formData.category_id || null,
         brand_id: formData.brand_id || null,
-        price: priceValue,
-        selling_price: priceValue,
-        cost: costValue,
-        cost_price: costValue,
+        selling_price: Number.parseFloat(formData.selling_price) || 0,
+        cost_price: formData.cost_price ? Number.parseFloat(formData.cost_price) : null,
         stock_quantity: Number.parseInt(formData.stock_quantity) || 0,
         min_stock_level: Number.parseInt(formData.min_stock_level) || 10,
         max_stock_level: Number.parseInt(formData.max_stock_level) || 0,
@@ -203,7 +196,7 @@ export default function ProductsPage() {
       } else {
         const { data, error } = await supabase
           .from("products")
-          .insert({ ...productData, created_at: new Date().toISOString() })
+          .insert({ ...productData })
           .select("id")
           .single()
         if (error) throw error
@@ -226,7 +219,7 @@ export default function ProductsPage() {
       await fetchProducts()
     } catch (error) {
       console.error("Error saving product:", error)
-      alert("Error saving product. Please check the console and try again.")
+      alert(`Error saving product: ${(error as Error).message}`)
     } finally {
       setSubmitting(false)
     }
@@ -240,8 +233,8 @@ export default function ProductsPage() {
       description: product.description || "",
       category_id: product.category_id || "",
       brand_id: product.brand_id || "",
-      price: (product.price || product.selling_price || 0).toString(),
-      cost: (product.cost || product.cost_price || 0).toString(),
+      selling_price: (product.selling_price || 0).toString(),
+      cost_price: (product.cost_price || "").toString(),
       stock_quantity: (product.stock_quantity || 0).toString(),
       min_stock_level: (product.min_stock_level || 10).toString(),
       max_stock_level: (product.max_stock_level || 0).toString(),
@@ -250,7 +243,6 @@ export default function ProductsPage() {
       is_active: product.is_active ?? true,
       image_url: product.image_url || ""
     })
-
     setImagePreview(product.image_url || null);
 
     const existingAttributes: Record<string, string> = {}
@@ -264,17 +256,19 @@ export default function ProductsPage() {
     setIsDialogOpen(true)
   }
 
-  const handleDelete = async (id: string) => {
-    if (confirm("Are you sure you want to delete this product?")) {
+  const handleDelete = async (product: Product) => {
+    if (confirm(`Are you sure you want to deactivate the product "${product.name}"? This is safer than deleting.`)) {
       try {
-        await supabase.from("product_attributes").delete().eq("product_id", id)
-        await supabase.from("sale_items").delete().eq("product_id", id) // This might fail if restricted
-        const { error } = await supabase.from("products").delete().eq("id", id)
+        const { error } = await supabase
+          .from("products")
+          .update({ is_active: false, updated_at: new Date().toISOString() })
+          .eq("id", product.id)
+
         if (error) throw error
         await fetchProducts()
       } catch (error) {
-        console.error("Error deleting product:", error)
-        alert("Could not delete product. It may be linked to existing sales records.")
+        console.error("Error deactivating product:", error)
+        alert("Error deactivating product.")
       }
     }
   }
@@ -282,7 +276,7 @@ export default function ProductsPage() {
   const resetForm = () => {
     setFormData({
       name: "", sku: "", description: "", category_id: "", brand_id: "",
-      price: "", cost: "", stock_quantity: "",
+      selling_price: "", cost_price: "", stock_quantity: "",
       min_stock_level: "10",
       max_stock_level: "0",
       unit: "pcs",
@@ -321,7 +315,7 @@ export default function ProductsPage() {
     setSelectedAttributes((prev) => ({ ...prev, [attributeId]: value }))
   }
 
-  const formatPrice = (price: number | null | undefined): string => (price || 0).toFixed(2)
+  const formatPrice = (price: number | null | undefined): string => (price || 0).toLocaleString()
   const formatNumber = (num: number | null | undefined): number => num || 0
   
   if (loading) {
@@ -362,7 +356,7 @@ export default function ProductsPage() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
           {filteredProducts.map((product) => (
-            <Card key={product.id} className="hover:shadow-lg transition-shadow flex flex-col">
+            <Card key={product.id} className="hover:shadow-lg transition-shadow flex flex-col bg-white">
               <CardHeader>
                 <div className="flex justify-between items-start gap-4">
                     <img src={product.image_url || 'https://placehold.co/100'} alt={product.name} className="w-20 h-20 rounded-md object-cover border"/>
@@ -370,14 +364,14 @@ export default function ProductsPage() {
                         <CardTitle className="text-lg leading-tight">{product.name}</CardTitle>
                         <p className="text-sm text-gray-500">SKU: {product.sku}</p>
                     </div>
-                  <Badge variant={product.is_active ? "default" : "secondary"}>
+                  <Badge variant={product.is_active ? "default" : "destructive"}>
                     {product.is_active ? "Active" : "Inactive"}
                   </Badge>
                 </div>
               </CardHeader>
               <CardContent className="space-y-3 text-sm flex-grow">
                 <div className="flex justify-between">
-                  <span className="text-gray-600">Price:</span>
+                  <span className="text-gray-600">Selling Price:</span>
                   <span className="font-medium">{formatPrice(product.selling_price)} MMK</span>
                 </div>
                 <div className="flex justify-between">
@@ -406,7 +400,7 @@ export default function ProductsPage() {
                     <Edit className="w-3 h-3 mr-2" />
                     Edit
                   </Button>
-                  <Button size="icon" variant="destructive" onClick={() => handleDelete(product.id)}>
+                  <Button size="icon" variant="destructive" onClick={() => handleDelete(product)}>
                     <Trash2 className="w-4 h-4" />
                   </Button>
                 </div>
@@ -487,12 +481,12 @@ export default function ProductsPage() {
                         </select>
                     </div>
                     <div>
-                        <Label htmlFor="price">Selling Price *</Label>
-                        <Input id="price" type="number" step="0.01" value={formData.price} onChange={(e) => setFormData({ ...formData, price: e.target.value })} required />
+                        <Label htmlFor="selling_price">Selling Price *</Label>
+                        <Input id="selling_price" type="number" step="any" value={formData.selling_price} onChange={(e) => setFormData({ ...formData, selling_price: e.target.value })} required />
                     </div>
                     <div>
-                        <Label htmlFor="cost">Cost Price</Label>
-                        <Input id="cost" type="number" step="0.01" value={formData.cost} onChange={(e) => setFormData({ ...formData, cost: e.target.value })} />
+                        <Label htmlFor="cost_price">Cost Price</Label>
+                        <Input id="cost_price" type="number" step="any" value={formData.cost_price} onChange={(e) => setFormData({ ...formData, cost_price: e.target.value })} />
                     </div>
                     <div>
                         <Label htmlFor="stock">Stock Quantity</Label>
