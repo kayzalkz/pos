@@ -63,12 +63,11 @@ export default function POSSalesForm() {
   const isAdmin = user?.role === "admin"
   const totalAmount = cart.reduce((sum, item) => sum + item.total, 0)
 
-  // NEW: useEffect to auto-fill paid amount for Cash/KBZ and clear for Credit
   useEffect(() => {
     if (paymentMethod === "cash" || paymentMethod === "kbz") {
       setPaidAmount(totalAmount.toString())
     } else if (paymentMethod === "credit") {
-      setPaidAmount("") // Clear paid amount for credit sales
+      setPaidAmount("")
     }
   }, [paymentMethod, totalAmount])
 
@@ -159,21 +158,17 @@ export default function POSSalesForm() {
   const paidAmountNum = Number.parseFloat(paidAmount) || 0
   const changeAmount = paidAmountNum - totalAmount
 
-  // MODIFIED: Updated the logic for enabling the "Complete Sale" button
   const canCompleteSale = () => {
     if (cart.length === 0) return false
 
-    // Rule for Credit: Must have a customer selected. Paid amount doesn't matter.
     if (paymentMethod === "credit") {
       return !!selectedCustomer
     }
 
-    // Rule for Cash & KBZ Pay: Paid amount must be sufficient.
     if (paidAmountNum < totalAmount) {
       return false
     }
 
-    // Rule for KBZ Pay: Phone number is required.
     if (paymentMethod === "kbz" && !kbzPhoneNumber) {
       return false
     }
@@ -199,8 +194,7 @@ export default function POSSalesForm() {
           sale_number: saleNumber,
           customer_id: selectedCustomer?.id,
           total_amount: totalAmount,
-          // For credit, paid amount is whatever is entered, otherwise it's the full amount
-          paid_amount: paymentMethod === "credit" ? paidAmountNum : totalAmount,
+          paid_amount: paidAmountNum,
           change_amount: changeAmount < 0 ? 0 : changeAmount,
           payment_method: paymentMethod,
           created_by: user?.id,
@@ -230,6 +224,29 @@ export default function POSSalesForm() {
           .eq("id", item.product.id)
       }
 
+      // Logic to handle credit sales and create a debit transaction
+      if (paymentMethod === "credit" && selectedCustomer) {
+        const creditUsed = totalAmount - paidAmountNum
+        if (creditUsed > 0) {
+          // 1. Create the debit transaction record
+          await supabase.from("customer_credits").insert({
+            customer_id: selectedCustomer.id,
+            amount: creditUsed,
+            type: "debit", // This is a debit because the customer is using their credit
+            description: `Used for sale ${saleNumber}`,
+            sale_id: saleData.id, // Link this transaction to the sale
+          })
+
+          // 2. Update the customer's total credit balance
+          const newBalance = selectedCustomer.credit_balance - creditUsed
+          await supabase
+            .from("customers")
+            .update({ credit_balance: Math.max(0, newBalance) })
+            .eq("id", selectedCustomer.id)
+        }
+      }
+
+      // This part handles giving credit back as change
       if (changeAmount > 0 && selectedCustomer) {
         await supabase.from("customer_credits").insert({
           customer_id: selectedCustomer.id,
@@ -239,11 +256,14 @@ export default function POSSalesForm() {
           sale_id: saleData.id,
         })
 
+        // We need to refetch the customer to get the most up-to-date balance before adding to it
+        const { data: currentCustomerData } = await supabase.from("customers").select("credit_balance").eq("id", selectedCustomer.id).single();
+        const currentBalance = currentCustomerData?.credit_balance ?? 0;
+
+        const newBalance = currentBalance + changeAmount
         await supabase
           .from("customers")
-          .update({
-            credit_balance: selectedCustomer.credit_balance + changeAmount,
-          })
+          .update({ credit_balance: newBalance })
           .eq("id", selectedCustomer.id)
       }
 
@@ -262,7 +282,6 @@ export default function POSSalesForm() {
     }
   }
 
-  // MODIFIED: Updated the receipt layout and styling
   const printReceipt = (sale: any, items: CartItem[]) => {
     const printWindow = window.open("", "_blank")
     if (!printWindow) return
@@ -284,24 +303,23 @@ export default function POSSalesForm() {
           .sale-info div { display: flex; justify-content: space-between; margin-bottom: 2px; }
           .items-section { border-top: 1px dashed #000; border-bottom: 1px dashed #000; padding: 10px 0; margin: 15px 0; }
           
-          /* MODIFIED: Item header and row styling for better spacing */
           .item-header, .item {
             display: flex;
             justify-content: space-between;
           }
           .item-header span:first-child, .item .item-name {
-            flex-grow: 1; /* Allows item name to take up space */
+            flex-grow: 1;
             text-align: left;
             margin-right: 5px;
             word-break: break-word;
           }
           .item-header span:nth-child(2), .item .item-qty {
-            width: 35px; /* Fixed width for QTY */
+            width: 35px;
             text-align: center;
             flex-shrink: 0;
           }
           .item-header span:last-child, .item .item-price {
-            width: 70px; /* Fixed width for Amount */
+            width: 70px;
             text-align: right;
             flex-shrink: 0;
           }
@@ -479,6 +497,7 @@ export default function POSSalesForm() {
                   const customer = customers.find((c) => c.id === value)
                   setSelectedCustomer(customer || null)
                 }}
+                value={selectedCustomer?.id || ""}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select customer" />
@@ -598,7 +617,6 @@ export default function POSSalesForm() {
                   placeholder={paymentMethod === "credit" ? "Enter paid amount" : "Auto-filled"}
                   value={paidAmount}
                   onChange={(e) => setPaidAmount(e.target.value)}
-                  // MODIFIED: Input is now editable only for credit sales
                   readOnly={paymentMethod !== "credit"}
                   className={paymentMethod !== "credit" ? "bg-gray-100" : ""}
                 />
