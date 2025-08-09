@@ -45,6 +45,17 @@ interface CartItem {
   total: number
 }
 
+// RESTORED: CompanyProfile interface is needed for the receipt
+interface CompanyProfile {
+  company_name: string
+  address: string
+  phone: string
+  email: string
+  website: string
+  tax_number: string
+  logo_url: string
+}
+
 export default function POSSalesForm() {
     // State variables
     const { user } = useAuth()
@@ -59,6 +70,8 @@ export default function POSSalesForm() {
     const [loading, setLoading] = useState(false)
     const [categories, setCategories] = useState<Category[]>([]);
     const [selectedCategory, setSelectedCategory] = useState<string>('all');
+    // RESTORED: State for company profile
+    const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null)
 
     const isAdmin = user?.role === "admin"
     const totalAmount = cart.reduce((sum, item) => sum + item.total, 0)
@@ -68,6 +81,7 @@ export default function POSSalesForm() {
         fetchProducts()
         fetchCustomers()
         fetchCategories()
+        fetchCompanyProfile() // RESTORED: Call to fetch company profile
     }, [])
     
     useEffect(() => {
@@ -79,6 +93,12 @@ export default function POSSalesForm() {
     }, [paymentMethod, totalAmount])
 
     // Data Fetching Functions
+    // RESTORED: Function to fetch company profile for receipt
+    const fetchCompanyProfile = async () => {
+        const { data } = await supabase.from("company_profile").select("*").single();
+        if (data) setCompanyProfile(data);
+    };
+
     const fetchProducts = async () => {
         const { data } = await supabase
         .from("products")
@@ -161,9 +181,6 @@ export default function POSSalesForm() {
         return true;
     }
 
-    // ==========================================================
-    // RESTORED 'processSale' FUNCTION
-    // ==========================================================
     const processSale = async () => {
         if (!canCompleteSale()) return;
 
@@ -256,35 +273,119 @@ export default function POSSalesForm() {
     };
     
     // ==========================================================
-    // RESTORED 'printReceipt' FUNCTION
+    // RESTORED 'printReceipt' FUNCTION WITH FULL STYLING & DATA
     // ==========================================================
     const printReceipt = (sale: any, items: CartItem[]) => {
-        const printWindow = window.open("", "_blank");
-        if (!printWindow) return;
+        const printWindow = window.open("", "_blank")
+        if (!printWindow) return
 
-        // Note: You would fetch companyProfile in a real app to display here
         const receiptHTML = `
         <html>
           <head>
             <title>Receipt - ${sale.sale_number}</title>
             <style>
-              body { font-family: 'Courier New', monospace; max-width: 300px; margin: 0 auto; padding: 10px; }
-              /* Add other receipt styles here */
+              * { margin: 0; padding: 0; box-sizing: border-box; }
+              body { font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; max-width: 300px; margin: 0 auto; padding: 10px; background: white; }
+              .logo-container { text-align: center; margin-bottom: 10px; }
+              .logo-container img { max-width: 120px; max-height: 80px; object-fit: contain; }
+              .receipt-header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 15px; }
+              .company-name { font-size: 16px; font-weight: bold; margin-bottom: 5px; text-transform: uppercase; }
+              .company-info { font-size: 10px; line-height: 1.3; margin-bottom: 8px; }
+              .receipt-title { font-size: 14px; font-weight: bold; margin: 8px 0; text-transform: uppercase; }
+              .sale-info { margin-bottom: 10px; font-size: 11px; }
+              .sale-info div { display: flex; justify-content: space-between; margin-bottom: 2px; }
+              .items-section { border-top: 1px dashed #000; border-bottom: 1px dashed #000; padding: 10px 0; margin: 15px 0; }
+              
+              .item-header, .item { display: flex; justify-content: space-between; }
+              .item-header span:first-child, .item .item-name { flex-grow: 1; text-align: left; margin-right: 5px; word-break: break-word; }
+              .item-header span:nth-child(2), .item .item-qty { width: 35px; text-align: center; flex-shrink: 0; }
+              .item-header span:last-child, .item .item-price { width: 70px; text-align: right; flex-shrink: 0; }
+              .item-header { font-weight: bold; margin-bottom: 5px; font-size: 10px; text-transform: uppercase; }
+              .item { margin-bottom: 3px; font-size: 11px; }
+
+              .totals-section { margin-top: 15px; }
+              .total-line { display: flex; justify-content: space-between; margin-bottom: 3px; font-size: 11px; }
+              .total-line.grand-total { font-weight: bold; font-size: 13px; border-top: 1px solid #000; padding-top: 5px; margin-top: 8px; }
+              .payment-info { margin-top: 15px; padding-top: 10px; border-top: 1px dashed #000; }
+              .footer { text-align: center; margin-top: 20px; padding-top: 10px; border-top: 2px solid #000; font-size: 10px; }
+              .thank-you { font-weight: bold; margin-bottom: 5px; }
+              @media print { body { margin: 0; padding: 5px; } }
             </style>
           </head>
           <body>
-            <h2>Receipt</h2>
-            <p>Sale No: ${sale.sale_number}</p>
-            <p>Date: ${new Date(sale.created_at).toLocaleString()}</p>
-            <hr/>
-            <h4>Items:</h4>
-            <ul>
-              ${items.map(item => `<li>${item.product.name} - ${item.quantity} x ${item.product.selling_price.toLocaleString()} = ${item.total.toLocaleString()}</li>`).join('')}
-            </ul>
-            <hr/>
-            <p><strong>Total: ${sale.total_amount.toLocaleString()} MMK</strong></p>
-            <p>Paid: ${sale.paid_amount.toLocaleString()} MMK</p>
-            <p>Change: ${sale.change_amount.toLocaleString()} MMK</p>
+            ${
+              companyProfile?.logo_url
+                ? `<div class="logo-container"><img src="${companyProfile.logo_url}" alt="Company Logo"></div>`
+                : ""
+            }
+
+            <div class="receipt-header">
+              <div class="company-name">${companyProfile?.company_name || "POS SYSTEM"}</div>
+              <div class="company-info">
+                ${companyProfile?.address ? `${companyProfile.address}<br>` : ""}
+                ${companyProfile?.phone ? `Tel: ${companyProfile.phone}<br>` : ""}
+                ${companyProfile?.email ? `Email: ${companyProfile.email}<br>` : ""}
+                ${companyProfile?.tax_number ? `Tax No: ${companyProfile.tax_number}` : ""}
+              </div>
+              <div class="receipt-title">SALES VOUCHER</div>
+            </div>
+            
+            <div class="sale-info">
+              <div><span>Voucher No:</span><span>${sale.sale_number}</span></div>
+              <div><span>Date:</span><span>${new Date(sale.created_at).toLocaleString()}</span></div>
+              ${selectedCustomer ? `<div><span>Customer:</span><span>${selectedCustomer.name}</span></div>` : ""}
+            </div>
+            
+            <div class="items-section">
+              <div class="item-header">
+                <span>ITEM</span>
+                <span>QTY</span>
+                <span>AMOUNT</span>
+              </div>
+              ${items
+                .map(
+                  (item) => `
+                <div class="item">
+                  <span class="item-name">${item.product.name}</span>
+                  <span class="item-qty">${item.quantity}</span>
+                  <span class="item-price">${item.total.toLocaleString()}</span>
+                </div>
+                <div style="font-size: 10px; color: #666; margin-left: 0; margin-bottom: 5px;">
+                  @ ${item.product.selling_price.toLocaleString()} MMK each
+                </div>
+              `,
+                )
+                .join("")}
+            </div>
+            
+            <div class="totals-section">
+              <div class="total-line grand-total">
+                <span>TOTAL:</span>
+                <span>${totalAmount.toLocaleString()} MMK</span>
+              </div>
+            </div>
+            
+            <div class="payment-info">
+              <div class="total-line">
+                <span>Payment:</span>
+                <span>${paymentMethod.toUpperCase()}</span>
+              </div>
+              <div class="total-line">
+                <span>Paid:</span>
+                <span>${paidAmountNum.toLocaleString()} MMK</span>
+              </div>
+              ${
+                changeAmount > 0
+                  ? `<div class="total-line"><span>Change:</span><span>${changeAmount.toLocaleString()} MMK</span></div>`
+                  : ""
+              }
+            </div>
+            
+            <div class="footer">
+              <div class="thank-you">THANK YOU!</div>
+              ${companyProfile?.website ? `<div>${companyProfile.website}</div>` : ""}
+            </div>
+            
             <script>
               window.onload = function() { window.print(); window.onafterprint = function() { window.close(); } }
             </script>
@@ -299,7 +400,6 @@ export default function POSSalesForm() {
     // Modern UI JSX
     return (
         <div className="flex h-screen bg-gray-50 font-sans">
-            {/* Left Panel: Product Selection */}
             <div className="w-3/5 p-4 flex flex-col">
                 <header className="mb-4">
                     <div className="relative">
@@ -363,7 +463,6 @@ export default function POSSalesForm() {
                 </div>
             </div>
 
-            {/* Right Panel: Shopping Cart & Checkout */}
             <div className="w-2/5 bg-white p-6 flex flex-col shadow-lg">
                  <div className="flex-1 flex flex-col min-h-0">
                     <div className="flex items-center space-x-3 mb-4">
