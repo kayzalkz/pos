@@ -71,7 +71,7 @@ export default function POSSalesForm() {
     const [selectedCategory, setSelectedCategory] = useState<string>('all');
     const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null)
 
-    const isAdmin = user?.role === "admin"
+    const isAdmin = user?.role?.trim().toLowerCase() === "admin"
     const totalAmount = cart.reduce((sum, item) => sum + item.total, 0)
     const paidAmountNum = Number.parseFloat(paidAmount) || 0
     const changeAmount = paidAmountNum > totalAmount ? paidAmountNum - totalAmount : 0
