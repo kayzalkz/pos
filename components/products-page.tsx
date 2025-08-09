@@ -101,20 +101,10 @@ export default function ProductsPage() {
   const fetchProducts = async () => {
     const { data, error } = await supabase
       .from("products")
-      .select(`
-        *, 
-        categories(name), 
-        brands(name), 
-        product_attributes(value, attributes(name, type))
-      `)
+      .select(`*, categories(name), brands(name), product_attributes(value, attributes(name, type))`)
       .order("name")
-    
-    if (error) {
-        console.error("Error fetching products:", error)
-        setProducts([])
-    } else {
-        setProducts((data as Product[]) || [])
-    }
+    if (error) console.error("Error fetching products:", error)
+    else setProducts((data as Product[]) || [])
   }
 
   const fetchCategories = async () => {
@@ -130,12 +120,7 @@ export default function ProductsPage() {
   }
 
   const fetchAttributes = async () => {
-    const { data, error } = await supabase
-        .from("attributes")
-        .select("id, name, type, values")
-        .eq("is_active", true)
-        .order("name")
-
+    const { data, error } = await supabase.from("attributes").select("id, name, type, values").eq("is_active", true).order("name")
     if (error) {
         console.error("Error fetching attributes:", error)
         setAttributes([])
@@ -154,6 +139,7 @@ export default function ProductsPage() {
       (product.sku || "").toLowerCase().includes(searchTerm.toLowerCase()),
   )
 
+  // MODIFIED: handleSubmit now sanitizes the filename before upload
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setSubmitting(true)
@@ -162,9 +148,20 @@ export default function ProductsPage() {
 
     try {
       if (imageFile) {
-        const filePath = `public/${Date.now()}-${imageFile.name}`;
+        const fileExt = imageFile.name.split('.').pop()
+        const fileNameWithoutExt = imageFile.name.substring(0, imageFile.name.lastIndexOf('.'))
+        
+        // This is the new sanitization logic
+        const sanitizedFileName = fileNameWithoutExt
+            .replace(/\s+/g, '-')           // Replace spaces with hyphens
+            .replace(/[^a-zA-Z0-9-]/g, ''); // Remove all non-alphanumeric characters except hyphens
+
+        const uniqueFileName = `${Date.now()}-${sanitizedFileName}.${fileExt}`;
+        const filePath = `public/${uniqueFileName}`;
+
         const { error: uploadError } = await supabase.storage.from('products').upload(filePath, imageFile);
         if (uploadError) throw uploadError;
+
         const { data: urlData } = supabase.storage.from('products').getPublicUrl(filePath);
         newImageUrl = urlData.publicUrl;
       }
@@ -194,11 +191,7 @@ export default function ProductsPage() {
         productId = editingProduct.id
         await supabase.from("product_attributes").delete().eq("product_id", productId)
       } else {
-        const { data, error } = await supabase
-          .from("products")
-          .insert({ ...productData })
-          .select("id")
-          .single()
+        const { data, error } = await supabase.from("products").insert({ ...productData }).select("id").single()
         if (error) throw error
         productId = data.id
       }
@@ -259,11 +252,7 @@ export default function ProductsPage() {
   const handleDelete = async (product: Product) => {
     if (confirm(`Are you sure you want to deactivate the product "${product.name}"? This is safer than deleting.`)) {
       try {
-        const { error } = await supabase
-          .from("products")
-          .update({ is_active: false, updated_at: new Date().toISOString() })
-          .eq("id", product.id)
-
+        const { error } = await supabase.from("products").update({ is_active: false, updated_at: new Date().toISOString() }).eq("id", product.id)
         if (error) throw error
         await fetchProducts()
       } catch (error) {
@@ -277,12 +266,8 @@ export default function ProductsPage() {
     setFormData({
       name: "", sku: "", description: "", category_id: "", brand_id: "",
       selling_price: "", cost_price: "", stock_quantity: "",
-      min_stock_level: "10",
-      max_stock_level: "0",
-      unit: "pcs",
-      barcode: "",
-      is_active: true,
-      image_url: ""
+      min_stock_level: "10", max_stock_level: "0", unit: "pcs",
+      barcode: "", is_active: true, image_url: ""
     })
     setSelectedAttributes({})
     setImageFile(null);
