@@ -10,12 +10,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
 import { supabase } from "@/lib/supabase"
-import { Plus, Search, CreditCard, TrendingUp, TrendingDown, Wallet, HandCoins } from "lucide-react"
+import { Plus, Search, Wallet, HandCoins, TrendingDown } from "lucide-react"
+import { Label } from "@/components/ui/label"
 
 interface Customer {
   id: string
   name: string
-  phone: string
+  phone: string | null // phone can be null
   credit_balance: number
 }
 
@@ -56,8 +57,11 @@ export default function CreditDebitPage() {
         if (data) setTransactions(data)
     }
 
+    // MODIFIED: Safely handles null phone numbers
     const filteredCustomers = customers.filter(
-        (customer) => customer.name.toLowerCase().includes(searchTerm.toLowerCase()) || customer.phone.includes(searchTerm),
+        (customer) =>
+            (customer.name || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (customer.phone || "").includes(searchTerm),
     )
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -72,12 +76,17 @@ export default function CreditDebitPage() {
             description: formData.description,
         })
 
+        // "credit" (repayment) INCREASES balance (less debt / more credit)
+        // "debit" (adding debt) DECREASES balance (more debt / less credit)
         const newBalance =
             formData.type === "credit"
                 ? selectedCustomer.credit_balance + amount
                 : selectedCustomer.credit_balance - amount
 
-        await supabase.from("customers").update({ credit_balance: newBalance }).eq("id", selectedCustomer.id)
+        await supabase
+            .from("customers")
+            .update({ credit_balance: newBalance })
+            .eq("id", selectedCustomer.id)
             
         setIsDialogOpen(false)
         resetForm()
