@@ -101,7 +101,7 @@ export default function POSSalesForm() {
   }
 
   const fetchCustomers = async () => {
-    const { data } = await supabase.from("customers").select("*")
+    const { data } = await supabase.from("customers").select("*").order("name")
     if (data) setCustomers(data)
   }
 
@@ -176,6 +176,7 @@ export default function POSSalesForm() {
     return true
   }
 
+  // MODIFIED: This entire function is restructured to prevent balance update errors.
   const processSale = async () => {
     if (!canCompleteSale()) return
 
@@ -187,6 +188,7 @@ export default function POSSalesForm() {
     setLoading(true)
 
     try {
+      // Create Sale Record
       const saleNumber = `SALE-${Date.now()}`
       const { data: saleData, error: saleError } = await supabase
         .from("sales")
@@ -204,6 +206,7 @@ export default function POSSalesForm() {
 
       if (saleError) throw saleError
 
+      // Create Sale Items Records
       const saleItems = cart.map((item) => ({
         sale_id: saleData.id,
         product_id: item.product.id,
@@ -211,10 +214,10 @@ export default function POSSalesForm() {
         unit_price: item.product.selling_price,
         total_price: item.total,
       }))
-
       const { error: itemsError } = await supabase.from("sale_items").insert(saleItems)
       if (itemsError) throw itemsError
 
+      // Update Product Stock
       for (const item of cart) {
         await supabase
           .from("products")
@@ -224,51 +227,58 @@ export default function POSSalesForm() {
           .eq("id", item.product.id)
       }
 
-      // Logic to handle credit sales and create a debit transaction
-      if (paymentMethod === "credit" && selectedCustomer) {
-        const creditUsed = totalAmount - paidAmountNum
-        if (creditUsed > 0) {
-          // 1. Create the debit transaction record
+      // --- RESTRUCTURED CUSTOMER BALANCE UPDATE ---
+      if (selectedCustomer) {
+        // 1. Get the most current balance from the database to avoid errors
+        const { data: customerData, error: customerError } = await supabase
+          .from("customers")
+          .select("credit_balance")
+          .eq("id", selectedCustomer.id)
+          .single()
+        
+        if (customerError) throw customerError;
+
+        let currentBalance = customerData.credit_balance;
+
+        // 2. Handle debit from the credit sale
+        if (paymentMethod === "credit") {
+          const creditUsed = totalAmount - paidAmountNum
+          if (creditUsed > 0) {
+            await supabase.from("customer_credits").insert({
+              customer_id: selectedCustomer.id,
+              amount: creditUsed,
+              type: "debit",
+              description: `Used for sale ${saleNumber}`,
+              sale_id: saleData.id,
+            })
+            currentBalance -= creditUsed // Adjust the balance
+          }
+        }
+
+        // 3. Handle credit from change given back to the customer
+        if (changeAmount > 0) {
           await supabase.from("customer_credits").insert({
             customer_id: selectedCustomer.id,
-            amount: creditUsed,
-            type: "debit", // This is a debit because the customer is using their credit
-            description: `Used for sale ${saleNumber}`,
-            sale_id: saleData.id, // Link this transaction to the sale
+            amount: changeAmount,
+            type: "credit",
+            description: `Change from sale ${saleNumber}`,
+            sale_id: saleData.id,
           })
+          currentBalance += changeAmount // Adjust the balance
+        }
 
-          // 2. Update the customer's total credit balance
-          const newBalance = selectedCustomer.credit_balance - creditUsed
+        // 4. Perform a single, final update to the customer's balance
+        if (currentBalance !== customerData.credit_balance) {
           await supabase
             .from("customers")
-            .update({ credit_balance: Math.max(0, newBalance) })
+            .update({ credit_balance: Math.max(0, currentBalance) })
             .eq("id", selectedCustomer.id)
         }
       }
 
-      // This part handles giving credit back as change
-      if (changeAmount > 0 && selectedCustomer) {
-        await supabase.from("customer_credits").insert({
-          customer_id: selectedCustomer.id,
-          amount: changeAmount,
-          type: "credit",
-          description: `Change from sale ${saleNumber}`,
-          sale_id: saleData.id,
-        })
-
-        // We need to refetch the customer to get the most up-to-date balance before adding to it
-        const { data: currentCustomerData } = await supabase.from("customers").select("credit_balance").eq("id", selectedCustomer.id).single();
-        const currentBalance = currentCustomerData?.credit_balance ?? 0;
-
-        const newBalance = currentBalance + changeAmount
-        await supabase
-          .from("customers")
-          .update({ credit_balance: newBalance })
-          .eq("id", selectedCustomer.id)
-      }
-
       printReceipt(saleData, cart)
 
+      // Reset State
       setCart([])
       setPaidAmount("")
       setKbzPhoneNumber("")
@@ -277,6 +287,7 @@ export default function POSSalesForm() {
       fetchCustomers()
     } catch (error) {
       console.error("Error processing sale:", error)
+      alert("An error occurred while processing the sale. Please check the console for details.")
     } finally {
       setLoading(false)
     }
