@@ -67,7 +67,7 @@ export default function POSSalesForm() {
     if (paymentMethod === "cash" || paymentMethod === "kbz") {
       setPaidAmount(totalAmount.toString())
     } else if (paymentMethod === "credit") {
-      setPaidAmount("")
+      setPaidAmount("0") // Default to paying 0 for credit sales
     }
   }, [paymentMethod, totalAmount])
 
@@ -156,15 +156,16 @@ export default function POSSalesForm() {
   }
 
   const paidAmountNum = Number.parseFloat(paidAmount) || 0
-  const changeAmount = paidAmountNum - totalAmount
+  const changeAmount = paidAmountNum > totalAmount ? paidAmountNum - totalAmount : 0
 
   const canCompleteSale = () => {
     if (cart.length === 0) return false
 
     if (paymentMethod === "credit") {
-      return !!selectedCustomer
+        if (!selectedCustomer || paidAmountNum > totalAmount) return false;
+        return true
     }
-
+    
     if (paidAmountNum < totalAmount) {
       return false
     }
@@ -176,7 +177,6 @@ export default function POSSalesForm() {
     return true
   }
 
-  // MODIFIED: This entire function is restructured to prevent balance update errors.
   const processSale = async () => {
     if (!canCompleteSale()) return
 
@@ -188,7 +188,6 @@ export default function POSSalesForm() {
     setLoading(true)
 
     try {
-      // Create Sale Record
       const saleNumber = `SALE-${Date.now()}`
       const { data: saleData, error: saleError } = await supabase
         .from("sales")
@@ -197,7 +196,7 @@ export default function POSSalesForm() {
           customer_id: selectedCustomer?.id,
           total_amount: totalAmount,
           paid_amount: paidAmountNum,
-          change_amount: changeAmount < 0 ? 0 : changeAmount,
+          change_amount: changeAmount,
           payment_method: paymentMethod,
           created_by: user?.id,
         })
@@ -206,7 +205,6 @@ export default function POSSalesForm() {
 
       if (saleError) throw saleError
 
-      // Create Sale Items Records
       const saleItems = cart.map((item) => ({
         sale_id: saleData.id,
         product_id: item.product.id,
@@ -214,10 +212,8 @@ export default function POSSalesForm() {
         unit_price: item.product.selling_price,
         total_price: item.total,
       }))
-      const { error: itemsError } = await supabase.from("sale_items").insert(saleItems)
-      if (itemsError) throw itemsError
+      await supabase.from("sale_items").insert(saleItems)
 
-      // Update Product Stock
       for (const item of cart) {
         await supabase
           .from("products")
@@ -227,20 +223,15 @@ export default function POSSalesForm() {
           .eq("id", item.product.id)
       }
 
-      // --- RESTRUCTURED CUSTOMER BALANCE UPDATE ---
       if (selectedCustomer) {
-        // 1. Get the most current balance from the database to avoid errors
-        const { data: customerData, error: customerError } = await supabase
+        const { data: customerData } = await supabase
           .from("customers")
           .select("credit_balance")
           .eq("id", selectedCustomer.id)
           .single()
         
-        if (customerError) throw customerError;
+        let newBalance = customerData?.credit_balance ?? 0
 
-        let currentBalance = customerData.credit_balance;
-
-        // 2. Handle debit from the credit sale
         if (paymentMethod === "credit") {
           const creditUsed = totalAmount - paidAmountNum
           if (creditUsed > 0) {
@@ -248,37 +239,21 @@ export default function POSSalesForm() {
               customer_id: selectedCustomer.id,
               amount: creditUsed,
               type: "debit",
-              description: `Used for sale ${saleNumber}`,
+              description: `Credit sale: ${saleNumber}`,
               sale_id: saleData.id,
             })
-            currentBalance -= creditUsed // Adjust the balance
+            newBalance += creditUsed
           }
         }
-
-        // 3. Handle credit from change given back to the customer
-        if (changeAmount > 0) {
-          await supabase.from("customer_credits").insert({
-            customer_id: selectedCustomer.id,
-            amount: changeAmount,
-            type: "credit",
-            description: `Change from sale ${saleNumber}`,
-            sale_id: saleData.id,
-          })
-          currentBalance += changeAmount // Adjust the balance
-        }
-
-        // 4. Perform a single, final update to the customer's balance
-        if (currentBalance !== customerData.credit_balance) {
-          await supabase
-            .from("customers")
-            .update({ credit_balance: Math.max(0, currentBalance) })
-            .eq("id", selectedCustomer.id)
-        }
+        
+        await supabase
+          .from("customers")
+          .update({ credit_balance: newBalance })
+          .eq("id", selectedCustomer.id)
       }
 
       printReceipt(saleData, cart)
 
-      // Reset State
       setCart([])
       setPaidAmount("")
       setKbzPhoneNumber("")
@@ -287,7 +262,7 @@ export default function POSSalesForm() {
       fetchCustomers()
     } catch (error) {
       console.error("Error processing sale:", error)
-      alert("An error occurred while processing the sale. Please check the console for details.")
+      alert("An error occurred while processing the sale.")
     } finally {
       setLoading(false)
     }
@@ -449,7 +424,6 @@ export default function POSSalesForm() {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Product Search & Selection */}
         <Card>
           <CardHeader>
             <CardTitle>Product Search</CardTitle>
@@ -464,7 +438,7 @@ export default function POSSalesForm() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-96 overflow-y-auto">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[60vh] overflow-y-auto">
               {filteredProducts.map((product) => (
                 <Card key={product.id} className="cursor-pointer hover:bg-gray-50" onClick={() => addToCart(product)}>
                   <CardContent className="p-3">
@@ -476,17 +450,6 @@ export default function POSSalesForm() {
                         Stock: {product.stock_quantity}
                       </Badge>
                     </div>
-                    {product.product_attributes && product.product_attributes.length > 0 && (
-                      <div className="mt-2">
-                        <div className="flex flex-wrap gap-1">
-                          {product.product_attributes.slice(0, 2).map((attr, index) => (
-                            <Badge key={index} variant="outline" className="text-xs">
-                              {attr.attributes.name}: {attr.value}
-                            </Badge>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                   </CardContent>
                 </Card>
               ))}
@@ -494,79 +457,58 @@ export default function POSSalesForm() {
           </CardContent>
         </Card>
 
-        {/* Shopping Cart & Checkout */}
         <Card>
           <CardHeader>
             <CardTitle>Shopping Cart</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Customer Selection */}
-            <div>
-              <label className="text-sm font-medium">Customer (Optional)</label>
-              <Select
-                onValueChange={(value) => {
-                  const customer = customers.find((c) => c.id === value)
-                  setSelectedCustomer(customer || null)
-                }}
-                value={selectedCustomer?.id || ""}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select customer" />
-                </SelectTrigger>
-                <SelectContent>
-                  {customers.map((customer) => (
-                    <SelectItem key={customer.id} value={customer.id}>
-                      {customer.name}{" "}
-                      {customer.credit_balance > 0 && `(Credit: ${customer.credit_balance.toLocaleString()} MMK)`}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {selectedCustomer && selectedCustomer.credit_balance > 0 && (
-                <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded">
-                  <p className="text-sm text-green-700">
-                    Customer has credit balance: {selectedCustomer.credit_balance.toLocaleString()} MMK
-                  </p>
+          <CardContent className="flex flex-col h-full">
+            <div className="space-y-4">
+                <div>
+                <label className="text-sm font-medium">Customer</label>
+                <Select
+                    onValueChange={(value) => {
+                    const customer = customers.find((c) => c.id === value)
+                    setSelectedCustomer(customer || null)
+                    }}
+                    value={selectedCustomer?.id || ""}
+                >
+                    <SelectTrigger>
+                    <SelectValue placeholder="Select customer" />
+                    </SelectTrigger>
+                    <SelectContent>
+                    {customers.map((customer) => (
+                        <SelectItem key={customer.id} value={customer.id}>
+                        {customer.name} {customer.credit_balance > 0 && `(Owes: ${customer.credit_balance.toLocaleString()} MMK)`}
+                        </SelectItem>
+                    ))}
+                    </SelectContent>
+                </Select>
                 </div>
-              )}
+
+                <div className="space-y-2 max-h-64 overflow-y-auto border p-2 rounded-md">
+                {cart.length === 0 ? (
+                    <p className="text-center text-gray-500 py-4">Cart is empty</p>
+                ) : (
+                    cart.map((item) => (
+                        <div key={item.product.id} className="flex items-center justify-between p-2 border-b last:border-b-0">
+                        <div className="flex-1 mr-2">
+                            <h5 className="font-medium text-sm">{item.product.name}</h5>
+                            <p className="text-xs text-gray-500">{item.product.selling_price.toLocaleString()} MMK each</p>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <Button size="icon" className="h-6 w-6" variant="outline" onClick={() => updateQuantity(item.product.id, item.quantity - 1)}> <Minus className="h-3 w-3" /> </Button>
+                            <span className="w-8 text-center text-sm font-medium">{item.quantity}</span>
+                            <Button size="icon" className="h-6 w-6" variant="outline" onClick={() => updateQuantity(item.product.id, item.quantity + 1)} disabled={item.quantity >= item.product.stock_quantity}> <Plus className="h-3 w-3" /> </Button>
+                        </div>
+                        <div className="ml-4 font-medium w-24 text-right">{item.total.toLocaleString()} MMK</div>
+                        <Button size="icon" className="h-6 w-6 ml-2" variant="ghost" onClick={() => removeFromCart(item.product.id)}> <Trash2 className="h-3 w-3 text-red-500" /> </Button>
+                        </div>
+                    ))
+                )}
+                </div>
             </div>
 
-            {/* Cart Items */}
-            <div className="space-y-2 max-h-64 overflow-y-auto">
-              {cart.map((item) => (
-                <div key={item.product.id} className="flex items-center justify-between p-2 border rounded">
-                  <div className="flex-1">
-                    <h5 className="font-medium text-sm">{item.product.name}</h5>
-                    <p className="text-xs text-gray-500">{item.product.selling_price.toLocaleString()} MMK each</p>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => updateQuantity(item.product.id, item.quantity - 1)}
-                    >
-                      <Minus className="h-3 w-3" />
-                    </Button>
-                    <span className="w-8 text-center">{item.quantity}</span>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => updateQuantity(item.product.id, item.quantity + 1)}
-                      disabled={item.quantity >= item.product.stock_quantity}
-                    >
-                      <Plus className="h-3 w-3" />
-                    </Button>
-                    <Button size="sm" variant="destructive" onClick={() => removeFromCart(item.product.id)}>
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
-                  </div>
-                  <div className="ml-4 font-medium">{item.total.toLocaleString()} MMK</div>
-                </div>
-              ))}
-            </div>
-
-            {/* Payment Section */}
-            <div className="border-t pt-4 space-y-4">
+            <div className="mt-auto border-t pt-4 space-y-4">
               <div className="flex justify-between text-lg font-bold">
                 <span>Total:</span>
                 <span>{totalAmount.toLocaleString()} MMK</span>
@@ -575,76 +517,31 @@ export default function POSSalesForm() {
               <div>
                 <label className="text-sm font-medium">Payment Method</label>
                 <div className="grid grid-cols-3 gap-2 mt-2">
-                  <Button
-                    variant={paymentMethod === "cash" ? "default" : "outline"}
-                    onClick={() => setPaymentMethod("cash")}
-                    className="flex items-center space-x-1"
-                  >
-                    <Banknote className="h-4 w-4" />
-                    <span>Cash</span>
-                  </Button>
-                  <Button
-                    variant={paymentMethod === "kbz" ? "default" : "outline"}
-                    onClick={() => setPaymentMethod("kbz")}
-                    className="flex items-center space-x-1"
-                  >
-                    <Smartphone className="h-4 w-4" />
-                    <span>KBZ Pay</span>
-                  </Button>
-                  <Button
-                    variant={paymentMethod === "credit" ? "default" : "outline"}
-                    onClick={() => setPaymentMethod("credit")}
-                    className="flex items-center space-x-1"
-                  >
-                    <CreditCard className="h-4 w-4" />
-                    <span>Credit</span>
-                  </Button>
+                  <Button variant={paymentMethod === "cash" ? "default" : "outline"} onClick={() => setPaymentMethod("cash")}> <Banknote className="h-4 w-4 mr-1" /> Cash </Button>
+                  <Button variant={paymentMethod === "kbz" ? "default" : "outline"} onClick={() => setPaymentMethod("kbz")}> <Smartphone className="h-4 w-4 mr-1" /> KBZ Pay </Button>
+                  <Button variant={paymentMethod === "credit" ? "default" : "outline"} onClick={() => setPaymentMethod("credit")}> <CreditCard className="h-4 w-4 mr-1" /> Credit </Button>
                 </div>
               </div>
-
-              {paymentMethod === "credit" && !selectedCustomer && (
-                <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded">
-                  <p className="text-sm text-red-700">Please select a customer for credit sales.</p>
-                </div>
-              )}
-
-              {paymentMethod === "kbz" && (
-                <div>
-                  <label className="text-sm font-medium">KBZ Pay Phone Number</label>
-                  <Input
-                    type="tel"
-                    placeholder="09xxxxxxxxx"
-                    value={kbzPhoneNumber}
-                    onChange={(e) => setKbzPhoneNumber(e.target.value)}
-                    required
-                  />
-                </div>
+              
+              {paymentMethod === 'kbz' && (
+                 <div>
+                   <label className="text-sm font-medium">KBZ Pay Phone Number</label>
+                   <Input type="tel" placeholder="09xxxxxxxxx" value={kbzPhoneNumber} onChange={(e) => setKbzPhoneNumber(e.target.value)} required/>
+                 </div>
               )}
 
               <div>
                 <label className="text-sm font-medium">Paid Amount (MMK)</label>
                 <Input
                   type="number"
-                  placeholder={paymentMethod === "credit" ? "Enter paid amount" : "Auto-filled"}
                   value={paidAmount}
                   onChange={(e) => setPaidAmount(e.target.value)}
-                  readOnly={paymentMethod !== "credit"}
-                  className={paymentMethod !== "credit" ? "bg-gray-100" : ""}
+                  readOnly={paymentMethod === 'cash' || paymentMethod === 'kbz'}
+                  className={paymentMethod !== 'credit' ? 'bg-gray-100' : ''}
                 />
-                {paidAmountNum > 0 && changeAmount !== 0 && paymentMethod !== "credit" && (
-                  <div className="mt-2 text-sm">
-                    <p className={changeAmount >= 0 ? "text-green-600" : "text-red-600"}>
-                      {changeAmount > 0 ? "Change" : "Amount Due"}: {Math.abs(changeAmount).toLocaleString()} MMK
-                    </p>
-                  </div>
-                )}
               </div>
 
-              <Button
-                onClick={processSale}
-                disabled={!canCompleteSale() || loading}
-                className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-              >
+              <Button onClick={processSale} disabled={!canCompleteSale() || loading} className="w-full bg-emerald-600 hover:bg-emerald-700">
                 {loading ? "Processing..." : "Complete Sale"}
               </Button>
             </div>
