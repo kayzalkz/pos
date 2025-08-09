@@ -37,7 +37,6 @@ interface CartItem {
   selectedAttributes?: { [key: string]: string }
 }
 
-// MODIFIED - Added logo_url
 interface CompanyProfile {
   company_name: string
   address: string
@@ -45,7 +44,7 @@ interface CompanyProfile {
   email: string
   website: string
   tax_number: string
-  logo_url?: string // NEW: Optional field for the company logo URL
+  logo_url?: string
 }
 
 export default function POSSalesForm() {
@@ -62,6 +61,16 @@ export default function POSSalesForm() {
   const [loading, setLoading] = useState(false)
 
   const isAdmin = user?.role === "admin"
+  const totalAmount = cart.reduce((sum, item) => sum + item.total, 0)
+
+  // NEW: useEffect to auto-fill paid amount for Cash/KBZ and clear for Credit
+  useEffect(() => {
+    if (paymentMethod === "cash" || paymentMethod === "kbz") {
+      setPaidAmount(totalAmount.toString())
+    } else if (paymentMethod === "credit") {
+      setPaidAmount("") // Clear paid amount for credit sales
+    }
+  }, [paymentMethod, totalAmount])
 
   useEffect(() => {
     fetchProducts()
@@ -130,8 +139,8 @@ export default function POSSalesForm() {
   }
 
   const updateQuantity = (productId: string, newQuantity: number) => {
-    if (newQuantity === 0) {
-      setCart(cart.filter((item) => item.product.id !== productId))
+    if (newQuantity <= 0) {
+      removeFromCart(productId)
     } else {
       setCart(
         cart.map((item) =>
@@ -147,17 +156,28 @@ export default function POSSalesForm() {
     setCart(cart.filter((item) => item.product.id !== productId))
   }
 
-  const totalAmount = cart.reduce((sum, item) => sum + item.total, 0)
   const paidAmountNum = Number.parseFloat(paidAmount) || 0
   const changeAmount = paidAmountNum - totalAmount
 
+  // MODIFIED: Updated the logic for enabling the "Complete Sale" button
   const canCompleteSale = () => {
     if (cart.length === 0) return false
-    if (!isAdmin && paidAmountNum < totalAmount) return false
-    if (paymentMethod === "kbz" && !kbzPhoneNumber) return false
-    if (paymentMethod === "credit" && !selectedCustomer) {
+
+    // Rule for Credit: Must have a customer selected. Paid amount doesn't matter.
+    if (paymentMethod === "credit") {
+      return !!selectedCustomer
+    }
+
+    // Rule for Cash & KBZ Pay: Paid amount must be sufficient.
+    if (paidAmountNum < totalAmount) {
       return false
     }
+
+    // Rule for KBZ Pay: Phone number is required.
+    if (paymentMethod === "kbz" && !kbzPhoneNumber) {
+      return false
+    }
+
     return true
   }
 
@@ -179,8 +199,9 @@ export default function POSSalesForm() {
           sale_number: saleNumber,
           customer_id: selectedCustomer?.id,
           total_amount: totalAmount,
-          paid_amount: paidAmountNum,
-          change_amount: changeAmount,
+          // For credit, paid amount is whatever is entered, otherwise it's the full amount
+          paid_amount: paymentMethod === "credit" ? paidAmountNum : totalAmount,
+          change_amount: changeAmount < 0 ? 0 : changeAmount,
           payment_method: paymentMethod,
           created_by: user?.id,
         })
@@ -241,7 +262,7 @@ export default function POSSalesForm() {
     }
   }
 
-  // MODIFIED - Updated the entire printReceipt function
+  // MODIFIED: Updated the receipt layout and styling
   const printReceipt = (sale: any, items: CartItem[]) => {
     const printWindow = window.open("", "_blank")
     if (!printWindow) return
@@ -252,125 +273,48 @@ export default function POSSalesForm() {
         <title>Receipt - ${sale.sale_number}</title>
         <style>
           * { margin: 0; padding: 0; box-sizing: border-box; }
-          body { 
-            font-family: 'Courier New', monospace; 
-            font-size: 12px; 
-            line-height: 1.4;
-            max-width: 300px; 
-            margin: 0 auto; 
-            padding: 10px;
-            background: white;
+          body { font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; max-width: 300px; margin: 0 auto; padding: 10px; background: white; }
+          .logo-container { text-align: center; margin-bottom: 10px; }
+          .logo-container img { max-width: 120px; max-height: 80px; object-fit: contain; }
+          .receipt-header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 15px; }
+          .company-name { font-size: 16px; font-weight: bold; margin-bottom: 5px; text-transform: uppercase; }
+          .company-info { font-size: 10px; line-height: 1.3; margin-bottom: 8px; }
+          .receipt-title { font-size: 14px; font-weight: bold; margin: 8px 0; text-transform: uppercase; }
+          .sale-info { margin-bottom: 10px; font-size: 11px; }
+          .sale-info div { display: flex; justify-content: space-between; margin-bottom: 2px; }
+          .items-section { border-top: 1px dashed #000; border-bottom: 1px dashed #000; padding: 10px 0; margin: 15px 0; }
+          
+          /* MODIFIED: Item header and row styling for better spacing */
+          .item-header, .item {
+            display: flex;
+            justify-content: space-between;
           }
-          /* NEW: Styles for the logo */
-          .logo-container {
+          .item-header span:first-child, .item .item-name {
+            flex-grow: 1; /* Allows item name to take up space */
+            text-align: left;
+            margin-right: 5px;
+            word-break: break-word;
+          }
+          .item-header span:nth-child(2), .item .item-qty {
+            width: 35px; /* Fixed width for QTY */
             text-align: center;
-            margin-bottom: 10px;
+            flex-shrink: 0;
           }
-          .logo-container img {
-            max-width: 120px; /* Adjust as needed */
-            max-height: 80px;  /* Adjust as needed */
-            object-fit: contain;
+          .item-header span:last-child, .item .item-price {
+            width: 70px; /* Fixed width for Amount */
+            text-align: right;
+            flex-shrink: 0;
           }
-          .receipt-header { 
-            text-align: center; 
-            border-bottom: 2px solid #000; 
-            padding-bottom: 10px; 
-            margin-bottom: 15px; 
-          }
-          .company-name { 
-            font-size: 16px; 
-            font-weight: bold; 
-            margin-bottom: 5px; 
-            text-transform: uppercase;
-          }
-          .company-info { 
-            font-size: 10px; 
-            line-height: 1.3; 
-            margin-bottom: 8px; 
-          }
-          .receipt-title { 
-            font-size: 14px; 
-            font-weight: bold; 
-            margin: 8px 0; 
-            text-transform: uppercase;
-          }
-          .sale-info { 
-            margin-bottom: 15px; 
-            font-size: 11px; 
-          }
-          .sale-info div { 
-            display: flex; 
-            justify-content: space-between; 
-            margin-bottom: 2px; 
-          }
-          .items-section { 
-            border-top: 1px dashed #000; 
-            border-bottom: 1px dashed #000; 
-            padding: 10px 0; 
-            margin: 15px 0; 
-          }
-          .item-header { 
-            display: flex; 
-            justify-content: space-between; 
-            font-weight: bold; 
-            margin-bottom: 5px; 
-            font-size: 10px;
-            text-transform: uppercase;
-          }
-          .item { 
-            display: flex; 
-            justify-content: space-between; 
-            margin-bottom: 3px; 
-            font-size: 11px;
-          }
-          .item-name { 
-            flex: 1; 
-            margin-right: 10px; 
-          }
-          .item-qty { 
-            width: 30px; 
-            text-align: center; 
-          }
-          .item-price { 
-            width: 60px; 
-            text-align: right; 
-          }
-          .totals-section { 
-            margin-top: 15px; 
-          }
-          .total-line { 
-            display: flex; 
-            justify-content: space-between; 
-            margin-bottom: 3px; 
-            font-size: 11px;
-          }
-          .total-line.grand-total { 
-            font-weight: bold; 
-            font-size: 13px; 
-            border-top: 1px solid #000; 
-            padding-top: 5px; 
-            margin-top: 8px; 
-          }
-          .payment-info { 
-            margin-top: 15px; 
-            padding-top: 10px; 
-            border-top: 1px dashed #000; 
-          }
-          .footer { 
-            text-align: center; 
-            margin-top: 20px; 
-            padding-top: 10px; 
-            border-top: 2px solid #000; 
-            font-size: 10px; 
-          }
-          .thank-you { 
-            font-weight: bold; 
-            margin-bottom: 5px; 
-          }
-          @media print { 
-            body { margin: 0; padding: 5px; } 
-            .no-print { display: none; }
-          }
+          .item-header { font-weight: bold; margin-bottom: 5px; font-size: 10px; text-transform: uppercase; }
+          .item { margin-bottom: 3px; font-size: 11px; }
+
+          .totals-section { margin-top: 15px; }
+          .total-line { display: flex; justify-content: space-between; margin-bottom: 3px; font-size: 11px; }
+          .total-line.grand-total { font-weight: bold; font-size: 13px; border-top: 1px solid #000; padding-top: 5px; margin-top: 8px; }
+          .payment-info { margin-top: 15px; padding-top: 10px; border-top: 1px dashed #000; }
+          .footer { text-align: center; margin-top: 20px; padding-top: 10px; border-top: 2px solid #000; font-size: 10px; }
+          .thank-you { font-weight: bold; margin-bottom: 5px; }
+          @media print { body { margin: 0; padding: 5px; } .no-print { display: none; } }
         </style>
       </head>
       <body>
@@ -388,13 +332,10 @@ export default function POSSalesForm() {
             ${companyProfile?.email ? `Email: ${companyProfile.email}<br>` : ""}
             ${companyProfile?.tax_number ? `Tax No: ${companyProfile.tax_number}` : ""}
           </div>
-          <div class="receipt-title">SALES RECEIPT</div>
+          <div class="receipt-title">SALES VOUCHER</div>
         </div>
         
         <div class="sale-info">
-          <div><span>Receipt No:</span><span>${sale.sale_number}</span></div>
-          <div><span>Date:</span><span>${new Date(sale.created_at).toLocaleDateString()}</span></div>
-          <div><span>Time:</span><span>${new Date(sale.created_at).toLocaleTimeString()}</span></div>
           ${selectedCustomer ? `<div><span>Customer:</span><span>${selectedCustomer.name}</span></div>` : ""}
           ${selectedCustomer?.phone ? `<div><span>Phone:</span><span>${selectedCustomer.phone}</span></div>` : ""}
         </div>
@@ -439,11 +380,7 @@ export default function POSSalesForm() {
           </div>
           ${
             paymentMethod === "kbz" && kbzPhoneNumber
-              ? `
-          <div class="total-line">
-            <span>KBZ Phone:</span>
-            <span>${kbzPhoneNumber}</span>
-          </div>`
+              ? `<div class="total-line"><span>KBZ Phone:</span><span>${kbzPhoneNumber}</span></div>`
               : ""
           }
           <div class="total-line">
@@ -452,11 +389,7 @@ export default function POSSalesForm() {
           </div>
           ${
             changeAmount > 0
-              ? `
-          <div class="total-line">
-            <span>Change:</span>
-            <span>${changeAmount.toLocaleString()} MMK</span>
-          </div>`
+              ? `<div class="total-line"><span>Change:</span><span>${changeAmount.toLocaleString()} MMK</span></div>`
               : ""
           }
         </div>
@@ -468,12 +401,7 @@ export default function POSSalesForm() {
         </div>
         
         <script>
-          window.onload = function() {
-            window.print();
-            window.onafterprint = function() {
-              window.close();
-            }
-          }
+          window.onload = function() { window.print(); window.onafterprint = function() { window.close(); } }
         </script>
       </body>
     </html>
@@ -667,14 +595,17 @@ export default function POSSalesForm() {
                 <label className="text-sm font-medium">Paid Amount (MMK)</label>
                 <Input
                   type="number"
-                  placeholder="Enter paid amount"
+                  placeholder={paymentMethod === "credit" ? "Enter paid amount" : "Auto-filled"}
                   value={paidAmount}
                   onChange={(e) => setPaidAmount(e.target.value)}
+                  // MODIFIED: Input is now editable only for credit sales
+                  readOnly={paymentMethod !== "credit"}
+                  className={paymentMethod !== "credit" ? "bg-gray-100" : ""}
                 />
-                {paidAmountNum > 0 && (
+                {paidAmountNum > 0 && changeAmount !== 0 && paymentMethod !== "credit" && (
                   <div className="mt-2 text-sm">
                     <p className={changeAmount >= 0 ? "text-green-600" : "text-red-600"}>
-                      Change: {changeAmount.toLocaleString()} MMK
+                      {changeAmount > 0 ? "Change" : "Amount Due"}: {Math.abs(changeAmount).toLocaleString()} MMK
                     </p>
                   </div>
                 )}
@@ -683,7 +614,7 @@ export default function POSSalesForm() {
               <Button
                 onClick={processSale}
                 disabled={!canCompleteSale() || loading}
-                className="w-full bg-emerald-600 hover:bg-emerald-700"
+                className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
               >
                 {loading ? "Processing..." : "Complete Sale"}
               </Button>
