@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -9,8 +9,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
 import { supabase } from "@/lib/supabase"
-import { Plus, Edit, Trash2, Search, Package, Loader2, AlertTriangle } from "lucide-react"
+import { Plus, Edit, Trash2, Search, Package, Loader2, AlertTriangle, UploadCloud, X } from "lucide-react"
 
+// Interfaces updated to include image_url
 interface Product {
   id: string
   name: string
@@ -29,6 +30,7 @@ interface Product {
   barcode: string | null
   is_active: boolean
   created_at: string
+  image_url?: string | null // For the product image
   categories?: { name: string } | null
   brands?: { name: string } | null
   product_attributes?: Array<{
@@ -55,6 +57,7 @@ interface Attribute {
 }
 
 export default function ProductsPage() {
+  // Existing state
   const [products, setProducts] = useState<Product[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [brands, setBrands] = useState<Brand[]>([])
@@ -65,6 +68,12 @@ export default function ProductsPage() {
   const [submitting, setSubmitting] = useState(false)
   const [selectedAttributes, setSelectedAttributes] = useState<Record<string, string>>({})
   const [editingProduct, setEditingProduct] = useState<Product | null>(null)
+  
+  // State for image handling
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [formData, setFormData] = useState({
     name: "",
     sku: "",
@@ -79,6 +88,7 @@ export default function ProductsPage() {
     unit: "pcs",
     barcode: "",
     is_active: true,
+    image_url: "",
   })
 
   useEffect(() => {
@@ -100,7 +110,7 @@ export default function ProductsPage() {
         .from("products")
         .select(`
           id, name, sku, description, category_id, brand_id, price, selling_price, cost, cost_price,
-          stock_quantity, min_stock_level, max_stock_level, unit, barcode,
+          stock_quantity, min_stock_level, max_stock_level, unit, barcode, image_url,
           is_active, created_at,
           categories(name),
           brands(name),
@@ -122,7 +132,6 @@ export default function ProductsPage() {
   const fetchCategories = async () => {
     try {
       const { data, error } = await supabase.from("categories").select("id, name").eq("is_active", true).order("name")
-
       if (error) throw error
       setCategories(data || [])
     } catch (error) {
@@ -134,7 +143,6 @@ export default function ProductsPage() {
   const fetchBrands = async () => {
     try {
       const { data, error } = await supabase.from("brands").select("id, name").eq("is_active", true).order("name")
-
       if (error) throw error
       setBrands(data || [])
     } catch (error) {
@@ -172,8 +180,32 @@ export default function ProductsPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setSubmitting(true)
+    
+    let newImageUrl = editingProduct?.image_url || null;
 
     try {
+      // 1. Handle image upload if a new file is selected
+      if (imageFile) {
+        const fileExt = imageFile.name.split('.').pop();
+        const fileName = `${Date.now()}.${fileExt}`;
+        const filePath = `public/${fileName}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('products') // The bucket name you created
+          .upload(filePath, imageFile);
+
+        if (uploadError) {
+          throw uploadError;
+        }
+
+        const { data: urlData } = supabase.storage
+          .from('products')
+          .getPublicUrl(filePath);
+        
+        newImageUrl = urlData.publicUrl;
+      }
+
+      // 2. Prepare product data with the new or existing image URL
       const priceValue = Number.parseFloat(formData.price) || 0
       const costValue = Number.parseFloat(formData.cost) || 0
 
@@ -184,43 +216,37 @@ export default function ProductsPage() {
         category_id: formData.category_id || null,
         brand_id: formData.brand_id || null,
         price: priceValue,
-        selling_price: priceValue, // Set selling_price to the same value as price
+        selling_price: priceValue,
         cost: costValue,
-        cost_price: costValue, // Set cost_price to the same value as cost
+        cost_price: costValue,
         stock_quantity: Number.parseInt(formData.stock_quantity) || 0,
         min_stock_level: Number.parseInt(formData.min_stock_level) || 0,
         max_stock_level: Number.parseInt(formData.max_stock_level) || 0,
         unit: formData.unit,
         barcode: formData.barcode.trim() || null,
         is_active: formData.is_active,
+        image_url: newImageUrl, // Use the determined image URL
         updated_at: new Date().toISOString(),
       }
 
-      let productId: string
-
+      // 3. Upsert product data
+      let productId: string;
       if (editingProduct) {
         const { error } = await supabase.from("products").update(productData).eq("id", editingProduct.id)
-
         if (error) throw error
         productId = editingProduct.id
-
-        // Delete existing attributes
         await supabase.from("product_attributes").delete().eq("product_id", productId)
       } else {
         const { data, error } = await supabase
           .from("products")
-          .insert({
-            ...productData,
-            created_at: new Date().toISOString(),
-          })
+          .insert({ ...productData, created_at: new Date().toISOString() })
           .select("id")
           .single()
-
         if (error) throw error
         productId = data.id
       }
 
-      // Insert selected attributes
+      // 4. Handle attributes
       const attributeInserts = Object.entries(selectedAttributes)
         .filter(([_, value]) => value && value.trim() !== "")
         .map(([attributeId, value]) => ({
@@ -231,17 +257,15 @@ export default function ProductsPage() {
 
       if (attributeInserts.length > 0) {
         const { error } = await supabase.from("product_attributes").insert(attributeInserts)
-
         if (error) throw error
       }
 
+      // 5. Reset and refetch
       setIsDialogOpen(false)
-      setEditingProduct(null)
-      resetForm()
       await fetchProducts()
     } catch (error) {
       console.error("Error saving product:", error)
-      alert("Error saving product. Please try again.")
+      alert("Error saving product. Please check the console and try again.")
     } finally {
       setSubmitting(false)
     }
@@ -263,9 +287,11 @@ export default function ProductsPage() {
       unit: product.unit || "pcs",
       barcode: product.barcode || "",
       is_active: product.is_active ?? true,
+      image_url: product.image_url || ""
     })
 
-    // Load existing attributes
+    setImagePreview(product.image_url || null); // Set existing image for preview
+
     const existingAttributes: Record<string, string> = {}
     if (product.product_attributes) {
       product.product_attributes.forEach((pa) => {
@@ -284,13 +310,9 @@ export default function ProductsPage() {
       confirm("Are you sure you want to delete this product? This will also remove it from any existing sales records.")
     ) {
       try {
-        // First, delete related records that might prevent deletion
         await supabase.from("product_attributes").delete().eq("product_id", id)
         await supabase.from("sale_items").delete().eq("product_id", id)
-
-        // Then delete the product
         const { error } = await supabase.from("products").delete().eq("id", id)
-
         if (error) throw error
         await fetchProducts()
       } catch (error) {
@@ -302,21 +324,13 @@ export default function ProductsPage() {
 
   const resetForm = () => {
     setFormData({
-      name: "",
-      sku: "",
-      description: "",
-      category_id: "",
-      brand_id: "",
-      price: "",
-      cost: "",
-      stock_quantity: "",
-      min_stock_level: "",
-      max_stock_level: "",
-      unit: "pcs",
-      barcode: "",
-      is_active: true,
+      name: "", sku: "", description: "", category_id: "", brand_id: "",
+      price: "", cost: "", stock_quantity: "", min_stock_level: "",
+      max_stock_level: "", unit: "pcs", barcode: "", is_active: true, image_url: ""
     })
     setSelectedAttributes({})
+    setImageFile(null);
+    setImagePreview(null);
   }
 
   const handleDialogClose = (open: boolean) => {
@@ -333,6 +347,14 @@ export default function ProductsPage() {
     setIsDialogOpen(true)
   }
 
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      setImageFile(file);
+      setImagePreview(URL.createObjectURL(file));
+    }
+  };
+
   const handleAttributeChange = (attributeId: string, value: string) => {
     setSelectedAttributes((prev) => ({
       ...prev,
@@ -340,7 +362,6 @@ export default function ProductsPage() {
     }))
   }
 
-  // Helper function to safely format numbers
   const formatPrice = (price: number | null | undefined): string => {
     return (price || 0).toFixed(2)
   }
@@ -375,151 +396,97 @@ export default function ProductsPage() {
             <DialogHeader>
               <DialogTitle>{editingProduct ? "Edit Product" : "Add New Product"}</DialogTitle>
             </DialogHeader>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm font-medium">Product Name *</label>
-                  <Input
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    placeholder="Enter product name"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium">SKU *</label>
-                  <Input
-                    value={formData.sku}
-                    onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
-                    placeholder="Enter SKU"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium">Category</label>
-                  <select
-                    value={formData.category_id}
-                    onChange={(e) => setFormData({ ...formData, category_id: e.target.value })}
-                    className="w-full p-2 border rounded-md"
+            <form onSubmit={handleSubmit} className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="md:col-span-1">
+                  <label className="text-sm font-medium mb-2 block">Product Image</label>
+                  <div 
+                    className="w-full aspect-square border-2 border-dashed rounded-lg flex items-center justify-center text-gray-400 cursor-pointer hover:bg-gray-50 hover:border-emerald-500 relative"
+                    onClick={() => fileInputRef.current?.click()}
                   >
-                    <option value="">Select Category</option>
-                    {categories.map((category) => (
-                      <option key={category.id} value={category.id}>
-                        {category.name}
-                      </option>
-                    ))}
-                  </select>
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      onChange={handleImageChange}
+                      className="hidden"
+                      accept="image/png, image/jpeg, image/webp"
+                    />
+                    {imagePreview ? (
+                      <>
+                        <img src={imagePreview} alt="Product preview" className="w-full h-full object-cover rounded-lg" />
+                        <Button
+                            type="button"
+                            variant="destructive"
+                            size="icon"
+                            className="absolute top-2 right-2 h-7 w-7"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setImageFile(null);
+                                setImagePreview(null);
+                                if (fileInputRef.current) fileInputRef.current.value = "";
+                            }}
+                        >
+                            <X className="h-4 w-4" />
+                        </Button>
+                      </>
+                    ) : (
+                      <div className="text-center">
+                        <UploadCloud className="mx-auto h-10 w-10" />
+                        <p className="mt-2 text-sm">Click to upload</p>
+                        <p className="text-xs">PNG, JPG, WEBP</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div>
-                  <label className="text-sm font-medium">Brand</label>
-                  <select
-                    value={formData.brand_id}
-                    onChange={(e) => setFormData({ ...formData, brand_id: e.target.value })}
-                    className="w-full p-2 border rounded-md"
-                  >
-                    <option value="">Select Brand</option>
-                    {brands.map((brand) => (
-                      <option key={brand.id} value={brand.id}>
-                        {brand.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-sm font-medium">Price *</label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    value={formData.price}
-                    onChange={(e) => setFormData({ ...formData, price: e.target.value })}
-                    placeholder="0.00"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium">Cost</label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    value={formData.cost}
-                    onChange={(e) => setFormData({ ...formData, cost: e.target.value })}
-                    placeholder="0.00"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium">Stock Quantity</label>
-                  <Input
-                    type="number"
-                    value={formData.stock_quantity}
-                    onChange={(e) => setFormData({ ...formData, stock_quantity: e.target.value })}
-                    placeholder="0"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium">Unit</label>
-                  <select
-                    value={formData.unit}
-                    onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
-                    className="w-full p-2 border rounded-md"
-                  >
-                    <option value="pcs">Pieces</option>
-                    <option value="kg">Kilograms</option>
-                    <option value="lbs">Pounds</option>
-                    <option value="liters">Liters</option>
-                    <option value="meters">Meters</option>
-                    <option value="boxes">Boxes</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-sm font-medium">Min Stock Level</label>
-                  <Input
-                    type="number"
-                    value={formData.min_stock_level}
-                    onChange={(e) => setFormData({ ...formData, min_stock_level: e.target.value })}
-                    placeholder="0"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium">Max Stock Level</label>
-                  <Input
-                    type="number"
-                    value={formData.max_stock_level}
-                    onChange={(e) => setFormData({ ...formData, max_stock_level: e.target.value })}
-                    placeholder="0"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium">Barcode</label>
-                  <Input
-                    value={formData.barcode}
-                    onChange={(e) => setFormData({ ...formData, barcode: e.target.value })}
-                    placeholder="Enter barcode"
-                  />
-                </div>
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="checkbox"
-                    id="is_active"
-                    checked={formData.is_active}
-                    onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
-                  />
-                  <label htmlFor="is_active" className="text-sm font-medium">
-                    Active
-                  </label>
+
+                <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label className="text-sm font-medium">Product Name *</label>
+                        <Input value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} required />
+                    </div>
+                    <div>
+                        <label className="text-sm font-medium">SKU *</label>
+                        <Input value={formData.sku} onChange={(e) => setFormData({ ...formData, sku: e.target.value })} required />
+                    </div>
+                    <div>
+                        <label className="text-sm font-medium">Category</label>
+                        <select value={formData.category_id} onChange={(e) => setFormData({ ...formData, category_id: e.target.value })} className="w-full p-2 border rounded-md">
+                            <option value="">Select Category</option>
+                            {categories.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="text-sm font-medium">Brand</label>
+                        <select value={formData.brand_id} onChange={(e) => setFormData({ ...formData, brand_id: e.target.value })} className="w-full p-2 border rounded-md">
+                            <option value="">Select Brand</option>
+                            {brands.map((b) => (<option key={b.id} value={b.id}>{b.name}</option>))}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="text-sm font-medium">Price *</label>
+                        <Input type="number" step="0.01" value={formData.price} onChange={(e) => setFormData({ ...formData, price: e.target.value })} required />
+                    </div>
+                    <div>
+                        <label className="text-sm font-medium">Cost</label>
+                        <Input type="number" step="0.01" value={formData.cost} onChange={(e) => setFormData({ ...formData, cost: e.target.value })} />
+                    </div>
+                    <div>
+                        <label className="text-sm font-medium">Stock Quantity</label>
+                        <Input type="number" value={formData.stock_quantity} onChange={(e) => setFormData({ ...formData, stock_quantity: e.target.value })} />
+                    </div>
+                    <div>
+                        <label className="text-sm font-medium">Unit</label>
+                        <select value={formData.unit} onChange={(e) => setFormData({ ...formData, unit: e.target.value })} className="w-full p-2 border rounded-md">
+                            <option value="pcs">Pieces</option> <option value="kg">Kilograms</option> <option value="box">Box</option>
+                        </select>
+                    </div>
+                    <div className="md:col-span-2">
+                        <label className="text-sm font-medium">Description</label>
+                        <Textarea value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} rows={2} />
+                    </div>
                 </div>
               </div>
 
-              <div>
-                <label className="text-sm font-medium">Description</label>
-                <Textarea
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  placeholder="Enter product description"
-                  rows={3}
-                />
-              </div>
-
-              {/* Dynamic Attributes */}
               {attributes.length > 0 && (
                 <div>
                   <h3 className="text-lg font-medium mb-3">Product Attributes</h3>
@@ -527,9 +494,7 @@ export default function ProductsPage() {
                     {attributes.map((attribute) => (
                       <div key={attribute.id}>
                         <label className="text-sm font-medium">{attribute.name}</label>
-                        {attribute.type === "select" &&
-                        Array.isArray(attribute.values) &&
-                        attribute.values.length > 0 ? (
+                        {attribute.type === "select" && Array.isArray(attribute.values) && attribute.values.length > 0 ? (
                           <select
                             value={selectedAttributes[attribute.id] || ""}
                             onChange={(e) => handleAttributeChange(attribute.id, e.target.value)}
@@ -537,9 +502,7 @@ export default function ProductsPage() {
                           >
                             <option value="">Select {attribute.name}</option>
                             {attribute.values.map((value) => (
-                              <option key={value} value={value}>
-                                {value}
-                              </option>
+                              <option key={value} value={value}>{value}</option>
                             ))}
                           </select>
                         ) : (
@@ -556,19 +519,10 @@ export default function ProductsPage() {
                 </div>
               )}
 
-              <div className="flex justify-end space-x-2">
-                <Button type="button" variant="outline" onClick={() => handleDialogClose(false)}>
-                  Cancel
-                </Button>
+              <div className="flex justify-end space-x-2 pt-4 border-t">
+                <Button type="button" variant="outline" onClick={() => handleDialogClose(false)}>Cancel</Button>
                 <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700" disabled={submitting}>
-                  {submitting ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      {editingProduct ? "Updating..." : "Creating..."}
-                    </>
-                  ) : (
-                    <>{editingProduct ? "Update" : "Create"} Product</>
-                  )}
+                  {submitting ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving...</> : <>{editingProduct ? "Update" : "Create"} Product</>}
                 </Button>
               </div>
             </form>
@@ -577,7 +531,6 @@ export default function ProductsPage() {
       </div>
 
       <div className="flex-1 p-6 overflow-y-auto">
-        {/* Search */}
         <Card className="mb-6">
           <CardContent className="p-4">
             <div className="relative">
@@ -592,7 +545,6 @@ export default function ProductsPage() {
           </CardContent>
         </Card>
 
-        {/* Products Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredProducts.map((product) => (
             <Card key={product.id} className="hover:shadow-lg transition-shadow">
@@ -652,8 +604,6 @@ export default function ProductsPage() {
                       <span className="text-sm font-mono">{product.barcode}</span>
                     </div>
                   )}
-
-                  {/* Display Attributes */}
                   {product.product_attributes && product.product_attributes.length > 0 && (
                     <div className="mt-3">
                       <p className="text-sm text-gray-600 mb-1">Attributes:</p>
@@ -666,14 +616,12 @@ export default function ProductsPage() {
                       </div>
                     </div>
                   )}
-
                   {product.description && (
                     <div className="mt-2">
                       <p className="text-xs text-gray-500">{product.description}</p>
                     </div>
                   )}
                 </div>
-
                 <div className="flex space-x-2">
                   <Button size="sm" variant="outline" onClick={() => handleEdit(product)} className="flex-1">
                     <Edit className="w-3 h-3 mr-1" />
