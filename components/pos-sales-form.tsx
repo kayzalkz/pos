@@ -13,7 +13,7 @@ import {
     User, ShoppingCart, Image as ImageIcon 
 } from "lucide-react"
 
-// MODIFIED: Interfaces updated to match your schema
+// Interfaces to match your database schema
 interface Category {
     id: string;
     name: string;
@@ -25,9 +25,9 @@ interface Product {
   sku: string
   selling_price: number
   stock_quantity: number
-  image_url?: string; // From the new column
+  image_url?: string;
   category_id: string;
-  categories: { // This will be populated by the join
+  categories: {
       name: string;
   }
 }
@@ -57,21 +57,19 @@ export default function POSSalesForm() {
     const [paidAmount, setPaidAmount] = useState("")
     const [kbzPhoneNumber, setKbzPhoneNumber] = useState("")
     const [loading, setLoading] = useState(false)
-    // NEW: State for categories and filtering
     const [categories, setCategories] = useState<Category[]>([]);
     const [selectedCategory, setSelectedCategory] = useState<string>('all');
 
     const isAdmin = user?.role === "admin"
     const totalAmount = cart.reduce((sum, item) => sum + item.total, 0)
 
-    // Fetch all initial data
+    // Effects
     useEffect(() => {
         fetchProducts()
         fetchCustomers()
         fetchCategories()
     }, [])
     
-    // Auto-fill paid amount based on payment method
     useEffect(() => {
         if (paymentMethod === "cash" || paymentMethod === "kbz") {
             setPaidAmount(totalAmount.toString())
@@ -80,9 +78,8 @@ export default function POSSalesForm() {
         }
     }, [paymentMethod, totalAmount])
 
-    // --- Data Fetching Functions ---
+    // Data Fetching Functions
     const fetchProducts = async () => {
-        // MODIFIED: Now joins with categories table
         const { data } = await supabase
         .from("products")
         .select(`
@@ -95,7 +92,6 @@ export default function POSSalesForm() {
         if (data) setProducts(data as Product[])
     }
 
-    // NEW: Function to get categories for filter buttons
     const fetchCategories = async () => {
         const { data } = await supabase
             .from("categories")
@@ -110,7 +106,7 @@ export default function POSSalesForm() {
         if (data) setCustomers(data)
     }
 
-    // --- Filtering Logic ---
+    // Filtering Logic
     const filteredProducts = products.filter((product) => {
         const matchesCategory = selectedCategory === 'all' || product.category_id === selectedCategory;
         const matchesSearch = product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -118,7 +114,7 @@ export default function POSSalesForm() {
         return matchesCategory && matchesSearch;
     });
 
-    // --- Cart & Sale Logic (Unchanged) ---
+    // Cart Handlers
     const addToCart = (product: Product) => {
         const existingItem = cart.find((item) => item.product.id === product.id)
         if (existingItem) {
@@ -150,6 +146,7 @@ export default function POSSalesForm() {
         setCart(cart.filter((item) => item.product.id !== productId))
     }
 
+    // Sale validation and processing
     const paidAmountNum = Number.parseFloat(paidAmount) || 0
     const changeAmount = paidAmountNum > totalAmount ? paidAmountNum - totalAmount : 0
 
@@ -164,12 +161,142 @@ export default function POSSalesForm() {
         return true;
     }
 
+    // ==========================================================
+    // RESTORED 'processSale' FUNCTION
+    // ==========================================================
     const processSale = async () => {
-        // This function's logic remains the same as the last working version.
-        // It is compatible with your schema.
+        if (!canCompleteSale()) return;
+
+        if (!isAdmin) {
+            alert("Only administrators can complete sales");
+            return;
+        }
+
+        setLoading(true);
+
+        try {
+            const saleNumber = `SALE-${Date.now()}`;
+            const { data: saleData, error: saleError } = await supabase
+                .from("sales")
+                .insert({
+                    sale_number: saleNumber,
+                    customer_id: selectedCustomer?.id,
+                    total_amount: totalAmount,
+                    paid_amount: paidAmountNum,
+                    change_amount: changeAmount,
+                    payment_method: paymentMethod,
+                    created_by: user?.id,
+                })
+                .select()
+                .single();
+
+            if (saleError) throw saleError;
+
+            const saleItems = cart.map((item) => ({
+                sale_id: saleData.id,
+                product_id: item.product.id,
+                quantity: item.quantity,
+                unit_price: item.product.selling_price,
+                total_price: item.total,
+            }));
+            await supabase.from("sale_items").insert(saleItems);
+
+            for (const item of cart) {
+                await supabase
+                    .from("products")
+                    .update({
+                        stock_quantity: item.product.stock_quantity - item.quantity,
+                    })
+                    .eq("id", item.product.id);
+            }
+
+            if (selectedCustomer) {
+                const { data: customerData } = await supabase
+                    .from("customers")
+                    .select("credit_balance")
+                    .eq("id", selectedCustomer.id)
+                    .single();
+                
+                let newBalance = customerData?.credit_balance ?? 0;
+
+                if (paymentMethod === "credit") {
+                    const creditUsed = totalAmount - paidAmountNum;
+                    if (creditUsed > 0) {
+                        await supabase.from("customer_credits").insert({
+                            customer_id: selectedCustomer.id,
+                            amount: creditUsed,
+                            type: "debit",
+                            description: `Credit sale: ${saleNumber}`,
+                            sale_id: saleData.id,
+                        });
+                        newBalance += creditUsed;
+                    }
+                }
+                
+                await supabase
+                    .from("customers")
+                    .update({ credit_balance: newBalance })
+                    .eq("id", selectedCustomer.id);
+            }
+
+            printReceipt(saleData, cart);
+
+            setCart([]);
+            setPaidAmount("");
+            setKbzPhoneNumber("");
+            setSelectedCustomer(null);
+            fetchProducts();
+            fetchCustomers();
+        } catch (error) {
+            console.error("Error processing sale:", error);
+            alert("An error occurred while processing the sale.");
+        } finally {
+            setLoading(false);
+        }
+    };
+    
+    // ==========================================================
+    // RESTORED 'printReceipt' FUNCTION
+    // ==========================================================
+    const printReceipt = (sale: any, items: CartItem[]) => {
+        const printWindow = window.open("", "_blank");
+        if (!printWindow) return;
+
+        // Note: You would fetch companyProfile in a real app to display here
+        const receiptHTML = `
+        <html>
+          <head>
+            <title>Receipt - ${sale.sale_number}</title>
+            <style>
+              body { font-family: 'Courier New', monospace; max-width: 300px; margin: 0 auto; padding: 10px; }
+              /* Add other receipt styles here */
+            </style>
+          </head>
+          <body>
+            <h2>Receipt</h2>
+            <p>Sale No: ${sale.sale_number}</p>
+            <p>Date: ${new Date(sale.created_at).toLocaleString()}</p>
+            <hr/>
+            <h4>Items:</h4>
+            <ul>
+              ${items.map(item => `<li>${item.product.name} - ${item.quantity} x ${item.product.selling_price.toLocaleString()} = ${item.total.toLocaleString()}</li>`).join('')}
+            </ul>
+            <hr/>
+            <p><strong>Total: ${sale.total_amount.toLocaleString()} MMK</strong></p>
+            <p>Paid: ${sale.paid_amount.toLocaleString()} MMK</p>
+            <p>Change: ${sale.change_amount.toLocaleString()} MMK</p>
+            <script>
+              window.onload = function() { window.print(); window.onafterprint = function() { window.close(); } }
+            </script>
+          </body>
+        </html>
+        `;
+
+        printWindow.document.write(receiptHTML);
+        printWindow.document.close();
     }
     
-    // --- Modern UI ---
+    // Modern UI JSX
     return (
         <div className="flex h-screen bg-gray-50 font-sans">
             {/* Left Panel: Product Selection */}
@@ -184,7 +311,6 @@ export default function POSSalesForm() {
                             className="pl-12 h-14 text-md bg-white rounded-full shadow-sm"
                         />
                     </div>
-                    {/* DYNAMIC Category Filters */}
                     <div className="mt-4 flex space-x-2 overflow-x-auto pb-2">
                         <Button 
                             variant={selectedCategory === 'all' ? 'default' : 'outline'}
