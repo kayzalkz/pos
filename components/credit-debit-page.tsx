@@ -38,7 +38,7 @@ export default function CreditDebitPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
   const [formData, setFormData] = useState({
-    type: "credit", // Default to 'credit' which is now a repayment
+    type: "credit", // Default to 'credit' which is a repayment
     amount: "",
     description: "",
   })
@@ -77,6 +77,11 @@ export default function CreditDebitPage() {
     if (!selectedCustomer) return
 
     const amount = Number.parseFloat(formData.amount)
+    if (isNaN(amount) || amount <= 0) {
+        alert("Please enter a valid positive amount.");
+        return;
+    }
+
     const transactionData = {
       customer_id: selectedCustomer.id,
       amount: amount,
@@ -86,13 +91,10 @@ export default function CreditDebitPage() {
     
     await supabase.from("customer_credits").insert(transactionData)
 
-    // MODIFIED: Corrected logic for balance updates
-    // "credit" is a repayment, which DECREASES debt.
-    // "debit" adds to their debt, which INCREASES it.
     const newBalance =
       formData.type === "credit"
-        ? selectedCustomer.credit_balance - amount
-        : selectedCustomer.credit_balance + amount
+        ? selectedCustomer.credit_balance - amount // "credit" is a repayment, so it DECREASES debt.
+        : selectedCustomer.credit_balance + amount // "debit" adds to their debt, which INCREASES it.
 
     await supabase
       .from("customers")
@@ -123,61 +125,59 @@ export default function CreditDebitPage() {
   const totalDebt = customers.reduce((sum, customer) => sum + customer.credit_balance, 0)
 
   return (
-    <div className="flex-1 flex flex-col">
-      <div className="bg-white p-6 border-b border-gray-200">
+    <div className="flex-1 flex flex-col bg-gray-50">
+      <header className="bg-white p-6 border-b border-gray-200 shadow-sm">
         <div className="flex items-center">
           <CreditCard className="w-6 h-6 mr-3 text-red-600" />
           <h1 className="text-2xl font-semibold text-gray-800">Customer Debt Management</h1>
         </div>
-      </div>
+        <p className="text-gray-600 mt-1">Track and manage outstanding customer debts and repayments.</p>
+      </header>
 
-      <div className="flex-1 p-6 overflow-y-auto">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+      <main className="flex-1 p-6 overflow-y-auto">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
           <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Total Outstanding Debt</p>
-                  <p className="text-2xl font-bold text-red-600">{totalDebt.toLocaleString()} MMK</p>
-                </div>
-                <TrendingUp className="w-8 h-8 text-red-600" />
-              </div>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Total Outstanding Debt</CardTitle>
+                <TrendingUp className="h-4 w-4 text-muted-foreground text-red-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-red-600">{totalDebt.toLocaleString()} MMK</div>
+              <p className="text-xs text-muted-foreground">Across all customers</p>
             </CardContent>
           </Card>
           <Card>
-            <CardContent className="p-4">
-               <div className="flex items-center justify-between">
-                 <div>
-                   <p className="text-sm text-gray-600">Customers with Debt</p>
-                   <p className="text-2xl font-bold text-blue-600">
-                     {customers.filter((c) => c.credit_balance > 0).length}
-                   </p>
-                 </div>
-                 <CreditCard className="w-8 h-8 text-blue-600" />
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Customers with Debt</CardTitle>
+                <CreditCard className="h-4 w-4 text-muted-foreground text-blue-500" />
+            </CardHeader>
+            <CardContent>
+               <div className="text-2xl font-bold text-blue-600">
+                 {customers.filter((c) => c.credit_balance > 0).length}
                </div>
+               <p className="text-xs text-muted-foreground">Customers with a balance > 0</p>
             </CardContent>
           </Card>
           <Card>
-            <CardContent className="p-4">
-               <div className="flex items-center justify-between">
-                 <div>
-                   <p className="text-sm text-gray-600">Recent Transactions</p>
-                   <p className="text-2xl font-bold text-purple-600">{transactions.length}</p>
-                 </div>
-                 <TrendingDown className="w-8 h-8 text-purple-600" />
-               </div>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Recent Transactions</CardTitle>
+                <TrendingDown className="h-4 w-4 text-muted-foreground text-purple-500" />
+            </CardHeader>
+            <CardContent>
+               <div className="text-2xl font-bold text-purple-600">{transactions.length}</div>
+                <p className="text-xs text-muted-foreground">In the last 100 records</p>
             </CardContent>
           </Card>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Card>
+          <Card className="h-fit">
             <CardHeader>
               <CardTitle>Customer Debt Balances</CardTitle>
-              <div className="relative">
-                <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+              <div className="relative pt-2">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                 <Input
-                  placeholder="Search customers..."
+                  placeholder="Search customers by name or phone..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="pl-10"
@@ -185,9 +185,9 @@ export default function CreditDebitPage() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3 max-h-96 overflow-y-auto">
+              <div className="space-y-3 max-h-[60vh] overflow-y-auto">
                 {filteredCustomers.map((customer) => (
-                  <div key={customer.id} className="flex items-center justify-between p-3 border rounded-lg">
+                  <div key={customer.id} className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50">
                     <div className="flex-1">
                       <h4 className="font-medium">{customer.name}</h4>
                       <p className="text-sm text-gray-500">{customer.phone}</p>
@@ -205,12 +205,12 @@ export default function CreditDebitPage() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="h-fit">
             <CardHeader>
               <CardTitle>Recent Transactions</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3 max-h-96 overflow-y-auto">
+              <div className="space-y-3 max-h-[60vh] overflow-y-auto">
                 {transactions.map((transaction) => (
                   <div key={transaction.id} className="p-3 border rounded-lg">
                     <div className="flex items-center justify-between mb-2">
@@ -221,9 +221,8 @@ export default function CreditDebitPage() {
                       </Badge>
                     </div>
                     <p className="text-sm text-gray-600">{transaction.description}</p>
-                    <p className="text-xs text-gray-500">
-                      {new Date(transaction.created_at).toLocaleDateString()} at{" "}
-                      {new Date(transaction.created_at).toLocaleTimeString()}
+                    <p className="text-xs text-gray-500 mt-1">
+                      {new Date(transaction.created_at).toLocaleString()}
                     </p>
                   </div>
                 ))}
@@ -250,7 +249,7 @@ export default function CreditDebitPage() {
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="credit">Repayment (Reduces Debt)</SelectItem>
-                    <SelectItem value="debit">Add to Debt</SelectItem>
+                    <SelectItem value="debit">Add to Debt (e.g., service fee)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -272,7 +271,7 @@ export default function CreditDebitPage() {
             </form>
           </DialogContent>
         </Dialog>
-      </div>
+      </main>
     </div>
   )
 }
