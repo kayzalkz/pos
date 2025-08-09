@@ -13,7 +13,7 @@ import {
     User, ShoppingCart, Image as ImageIcon 
 } from "lucide-react"
 
-// Interfaces to match your database schema
+// Interfaces
 interface Category {
     id: string;
     name: string;
@@ -45,7 +45,6 @@ interface CartItem {
   total: number
 }
 
-// RESTORED: CompanyProfile interface is needed for the receipt
 interface CompanyProfile {
   company_name: string
   address: string
@@ -70,18 +69,19 @@ export default function POSSalesForm() {
     const [loading, setLoading] = useState(false)
     const [categories, setCategories] = useState<Category[]>([]);
     const [selectedCategory, setSelectedCategory] = useState<string>('all');
-    // RESTORED: State for company profile
     const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null)
 
     const isAdmin = user?.role === "admin"
     const totalAmount = cart.reduce((sum, item) => sum + item.total, 0)
+    const paidAmountNum = Number.parseFloat(paidAmount) || 0
+    const changeAmount = paidAmountNum > totalAmount ? paidAmountNum - totalAmount : 0
 
     // Effects
     useEffect(() => {
         fetchProducts()
         fetchCustomers()
         fetchCategories()
-        fetchCompanyProfile() // RESTORED: Call to fetch company profile
+        fetchCompanyProfile()
     }, [])
     
     useEffect(() => {
@@ -93,7 +93,6 @@ export default function POSSalesForm() {
     }, [paymentMethod, totalAmount])
 
     // Data Fetching Functions
-    // RESTORED: Function to fetch company profile for receipt
     const fetchCompanyProfile = async () => {
         const { data } = await supabase.from("company_profile").select("*").single();
         if (data) setCompanyProfile(data);
@@ -102,10 +101,7 @@ export default function POSSalesForm() {
     const fetchProducts = async () => {
         const { data } = await supabase
         .from("products")
-        .select(`
-            *,
-            categories (name)
-        `)
+        .select(`*, categories (name)`)
         .eq('is_active', true)
         .gt("stock_quantity", 0)
         .order("name");
@@ -113,11 +109,7 @@ export default function POSSalesForm() {
     }
 
     const fetchCategories = async () => {
-        const { data } = await supabase
-            .from("categories")
-            .select("id, name")
-            .eq('is_active', true)
-            .order('name');
+        const { data } = await supabase.from("categories").select("id, name").eq('is_active', true).order('name');
         if (data) setCategories(data);
     }
 
@@ -166,31 +158,30 @@ export default function POSSalesForm() {
         setCart(cart.filter((item) => item.product.id !== productId))
     }
 
-    // Sale validation and processing
-    const paidAmountNum = Number.parseFloat(paidAmount) || 0
-    const changeAmount = paidAmountNum > totalAmount ? paidAmountNum - totalAmount : 0
-
     const canCompleteSale = () => {
         if (cart.length === 0) return false;
+
         if (paymentMethod === "credit") {
             if (!selectedCustomer || paidAmountNum > totalAmount) return false;
             return true;
         }
-        if (paidAmountNum < totalAmount) return false;
-        if (paymentMethod === "kbz" && !kbzPhoneNumber) return false;
+
+        if (paymentMethod === 'cash' || paymentMethod === 'kbz') {
+            if (paidAmountNum < totalAmount) return false;
+            if (paidAmountNum > totalAmount && !selectedCustomer) return false;
+            if (paymentMethod === "kbz" && !kbzPhoneNumber) return false;
+        }
+        
         return true;
     }
 
     const processSale = async () => {
         if (!canCompleteSale()) return;
-
         if (!isAdmin) {
             alert("Only administrators can complete sales");
             return;
         }
-
         setLoading(true);
-
         try {
             const saleNumber = `SALE-${Date.now()}`;
             const { data: saleData, error: saleError } = await supabase
@@ -219,21 +210,11 @@ export default function POSSalesForm() {
             await supabase.from("sale_items").insert(saleItems);
 
             for (const item of cart) {
-                await supabase
-                    .from("products")
-                    .update({
-                        stock_quantity: item.product.stock_quantity - item.quantity,
-                    })
-                    .eq("id", item.product.id);
+                await supabase.from("products").update({ stock_quantity: item.product.stock_quantity - item.quantity }).eq("id", item.product.id);
             }
 
             if (selectedCustomer) {
-                const { data: customerData } = await supabase
-                    .from("customers")
-                    .select("credit_balance")
-                    .eq("id", selectedCustomer.id)
-                    .single();
-                
+                const { data: customerData } = await supabase.from("customers").select("credit_balance").eq("id", selectedCustomer.id).single();
                 let newBalance = customerData?.credit_balance ?? 0;
 
                 if (paymentMethod === "credit") {
@@ -249,11 +230,21 @@ export default function POSSalesForm() {
                         newBalance += creditUsed;
                     }
                 }
-                
-                await supabase
-                    .from("customers")
-                    .update({ credit_balance: newBalance })
-                    .eq("id", selectedCustomer.id);
+
+                if (changeAmount > 0 && paymentMethod !== 'credit') {
+                    await supabase.from("customer_credits").insert({
+                        customer_id: selectedCustomer.id,
+                        amount: changeAmount,
+                        type: 'credit',
+                        description: `Change from sale ${saleNumber}`,
+                        sale_id: saleData.id,
+                    });
+                    newBalance -= changeAmount;
+                }
+
+                if (newBalance !== (customerData?.credit_balance ?? 0)) {
+                    await supabase.from("customers").update({ credit_balance: Math.max(0, newBalance) }).eq("id", selectedCustomer.id);
+                }
             }
 
             printReceipt(saleData, cart);
@@ -262,8 +253,8 @@ export default function POSSalesForm() {
             setPaidAmount("");
             setKbzPhoneNumber("");
             setSelectedCustomer(null);
-            fetchProducts();
-            fetchCustomers();
+            await fetchProducts();
+            await fetchCustomers();
         } catch (error) {
             console.error("Error processing sale:", error);
             alert("An error occurred while processing the sale.");
@@ -272,12 +263,9 @@ export default function POSSalesForm() {
         }
     };
     
-    // ==========================================================
-    // RESTORED 'printReceipt' FUNCTION WITH FULL STYLING & DATA
-    // ==========================================================
     const printReceipt = (sale: any, items: CartItem[]) => {
         const printWindow = window.open("", "_blank")
-        if (!printWindow) return
+        if (!printWindow) return;
 
         const receiptHTML = `
         <html>
@@ -295,14 +283,12 @@ export default function POSSalesForm() {
               .sale-info { margin-bottom: 10px; font-size: 11px; }
               .sale-info div { display: flex; justify-content: space-between; margin-bottom: 2px; }
               .items-section { border-top: 1px dashed #000; border-bottom: 1px dashed #000; padding: 10px 0; margin: 15px 0; }
-              
               .item-header, .item { display: flex; justify-content: space-between; }
               .item-header span:first-child, .item .item-name { flex-grow: 1; text-align: left; margin-right: 5px; word-break: break-word; }
               .item-header span:nth-child(2), .item .item-qty { width: 35px; text-align: center; flex-shrink: 0; }
               .item-header span:last-child, .item .item-price { width: 70px; text-align: right; flex-shrink: 0; }
               .item-header { font-weight: bold; margin-bottom: 5px; font-size: 10px; text-transform: uppercase; }
               .item { margin-bottom: 3px; font-size: 11px; }
-
               .totals-section { margin-top: 15px; }
               .total-line { display: flex; justify-content: space-between; margin-bottom: 3px; font-size: 11px; }
               .total-line.grand-total { font-weight: bold; font-size: 13px; border-top: 1px solid #000; padding-top: 5px; margin-top: 8px; }
@@ -313,12 +299,7 @@ export default function POSSalesForm() {
             </style>
           </head>
           <body>
-            ${
-              companyProfile?.logo_url
-                ? `<div class="logo-container"><img src="${companyProfile.logo_url}" alt="Company Logo"></div>`
-                : ""
-            }
-
+            ${companyProfile?.logo_url ? `<div class="logo-container"><img src="${companyProfile.logo_url}" alt="Company Logo"></div>` : ""}
             <div class="receipt-header">
               <div class="company-name">${companyProfile?.company_name || "POS SYSTEM"}</div>
               <div class="company-info">
@@ -329,22 +310,18 @@ export default function POSSalesForm() {
               </div>
               <div class="receipt-title">SALES VOUCHER</div>
             </div>
-            
             <div class="sale-info">
               <div><span>Voucher No:</span><span>${sale.sale_number}</span></div>
               <div><span>Date:</span><span>${new Date(sale.created_at).toLocaleString()}</span></div>
               ${selectedCustomer ? `<div><span>Customer:</span><span>${selectedCustomer.name}</span></div>` : ""}
             </div>
-            
             <div class="items-section">
               <div class="item-header">
                 <span>ITEM</span>
                 <span>QTY</span>
                 <span>AMOUNT</span>
               </div>
-              ${items
-                .map(
-                  (item) => `
+              ${items.map((item) => `
                 <div class="item">
                   <span class="item-name">${item.product.name}</span>
                   <span class="item-qty">${item.quantity}</span>
@@ -353,18 +330,14 @@ export default function POSSalesForm() {
                 <div style="font-size: 10px; color: #666; margin-left: 0; margin-bottom: 5px;">
                   @ ${item.product.selling_price.toLocaleString()} MMK each
                 </div>
-              `,
-                )
-                .join("")}
+              `).join("")}
             </div>
-            
             <div class="totals-section">
               <div class="total-line grand-total">
                 <span>TOTAL:</span>
                 <span>${totalAmount.toLocaleString()} MMK</span>
               </div>
             </div>
-            
             <div class="payment-info">
               <div class="total-line">
                 <span>Payment:</span>
@@ -374,18 +347,12 @@ export default function POSSalesForm() {
                 <span>Paid:</span>
                 <span>${paidAmountNum.toLocaleString()} MMK</span>
               </div>
-              ${
-                changeAmount > 0
-                  ? `<div class="total-line"><span>Change:</span><span>${changeAmount.toLocaleString()} MMK</span></div>`
-                  : ""
-              }
+              ${changeAmount > 0 ? `<div class="total-line"><span>Change:</span><span>${changeAmount.toLocaleString()} MMK</span></div>` : ""}
             </div>
-            
             <div class="footer">
               <div class="thank-you">THANK YOU!</div>
               ${companyProfile?.website ? `<div>${companyProfile.website}</div>` : ""}
             </div>
-            
             <script>
               window.onload = function() { window.print(); window.onafterprint = function() { window.close(); } }
             </script>
@@ -397,7 +364,6 @@ export default function POSSalesForm() {
         printWindow.document.close();
     }
     
-    // Modern UI JSX
     return (
         <div className="flex h-screen bg-gray-50 font-sans">
             <div className="w-3/5 p-4 flex flex-col">
@@ -429,7 +395,6 @@ export default function POSSalesForm() {
                         ))}
                     </div>
                 </header>
-
                 <div className="flex-1 overflow-y-auto pr-2">
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                         {filteredProducts.map((product) => (
@@ -464,7 +429,7 @@ export default function POSSalesForm() {
             </div>
 
             <div className="w-2/5 bg-white p-6 flex flex-col shadow-lg">
-                 <div className="flex-1 flex flex-col min-h-0">
+                <div className="flex-1 flex flex-col min-h-0">
                     <div className="flex items-center space-x-3 mb-4">
                         <User className="h-6 w-6 text-gray-500" />
                         <Select
@@ -543,10 +508,16 @@ export default function POSSalesForm() {
                             className="h-12 text-md"
                             value={paidAmount}
                             onChange={(e) => setPaidAmount(e.target.value)}
-                            readOnly={paymentMethod === 'cash' || paymentMethod === 'kbz'}
                         />
-                         {changeAmount > 0 && paymentMethod !== 'credit' && (
-                            <p className="text-right text-green-600 mt-1 font-medium">Change: {changeAmount.toLocaleString()} MMK</p>
+                        {paidAmountNum > totalAmount && !selectedCustomer && (paymentMethod === 'cash' || paymentMethod === 'kbz') && (
+                            <p className="text-sm text-red-600 mt-1">
+                                Please select a customer to credit the change amount.
+                            </p>
+                        )}
+                         {changeAmount > 0 && (
+                            <p className="text-right text-green-600 mt-1 font-medium">
+                                {selectedCustomer ? 'Credit Change' : 'Change Due'}: {changeAmount.toLocaleString()} MMK
+                            </p>
                         )}
                     </div>
 
