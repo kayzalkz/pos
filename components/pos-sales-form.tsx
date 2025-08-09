@@ -37,6 +37,7 @@ interface CartItem {
   selectedAttributes?: { [key: string]: string }
 }
 
+// MODIFIED - Added logo_url
 interface CompanyProfile {
   company_name: string
   address: string
@@ -44,6 +45,7 @@ interface CompanyProfile {
   email: string
   website: string
   tax_number: string
+  logo_url?: string // NEW: Optional field for the company logo URL
 }
 
 export default function POSSalesForm() {
@@ -59,7 +61,6 @@ export default function POSSalesForm() {
   const [kbzPhoneNumber, setKbzPhoneNumber] = useState("")
   const [loading, setLoading] = useState(false)
 
-  // Check if user is admin
   const isAdmin = user?.role === "admin"
 
   useEffect(() => {
@@ -76,14 +77,16 @@ export default function POSSalesForm() {
   const fetchProducts = async () => {
     const { data } = await supabase
       .from("products")
-      .select(`
+      .select(
+        `
         *,
         product_attributes(
           attribute_id,
           value,
           attributes(name)
         )
-      `)
+      `,
+      )
       .gt("stock_quantity", 0)
 
     if (data) setProducts(data)
@@ -152,19 +155,15 @@ export default function POSSalesForm() {
     if (cart.length === 0) return false
     if (!isAdmin && paidAmountNum < totalAmount) return false
     if (paymentMethod === "kbz" && !kbzPhoneNumber) return false
-
-    // Prevent credit sales for walk-in customers
     if (paymentMethod === "credit" && !selectedCustomer) {
       return false
     }
-
     return true
   }
 
   const processSale = async () => {
     if (!canCompleteSale()) return
 
-    // Only admin can complete sales
     if (!isAdmin) {
       alert("Only administrators can complete sales")
       return
@@ -174,7 +173,6 @@ export default function POSSalesForm() {
 
     try {
       const saleNumber = `SALE-${Date.now()}`
-
       const { data: saleData, error: saleError } = await supabase
         .from("sales")
         .insert({
@@ -243,6 +241,7 @@ export default function POSSalesForm() {
     }
   }
 
+  // MODIFIED - Updated the entire printReceipt function
   const printReceipt = (sale: any, items: CartItem[]) => {
     const printWindow = window.open("", "_blank")
     if (!printWindow) return
@@ -261,6 +260,16 @@ export default function POSSalesForm() {
             margin: 0 auto; 
             padding: 10px;
             background: white;
+          }
+          /* NEW: Styles for the logo */
+          .logo-container {
+            text-align: center;
+            margin-bottom: 10px;
+          }
+          .logo-container img {
+            max-width: 120px; /* Adjust as needed */
+            max-height: 80px;  /* Adjust as needed */
+            object-fit: contain;
           }
           .receipt-header { 
             text-align: center; 
@@ -365,6 +374,12 @@ export default function POSSalesForm() {
         </style>
       </head>
       <body>
+        ${
+          companyProfile?.logo_url
+            ? `<div class="logo-container"><img src="${companyProfile.logo_url}" alt="Company Logo"></div>`
+            : ""
+        }
+
         <div class="receipt-header">
           <div class="company-name">${companyProfile?.company_name || "POS SYSTEM"}</div>
           <div class="company-info">
@@ -378,8 +393,8 @@ export default function POSSalesForm() {
         
         <div class="sale-info">
           <div><span>Receipt No:</span><span>${sale.sale_number}</span></div>
-          <div><span>Date:</span><span>${new Date(sale.sale_date).toLocaleDateString()}</span></div>
-          <div><span>Time:</span><span>${new Date(sale.sale_date).toLocaleTimeString()}</span></div>
+          <div><span>Date:</span><span>${new Date(sale.created_at).toLocaleDateString()}</span></div>
+          <div><span>Time:</span><span>${new Date(sale.created_at).toLocaleTimeString()}</span></div>
           ${selectedCustomer ? `<div><span>Customer:</span><span>${selectedCustomer.name}</span></div>` : ""}
           ${selectedCustomer?.phone ? `<div><span>Phone:</span><span>${selectedCustomer.phone}</span></div>` : ""}
         </div>
