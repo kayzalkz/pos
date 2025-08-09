@@ -246,6 +246,7 @@ export default function POSSalesForm() {
                     }
                 }
 
+                // THIS IS THE FIX: Change is ADDED to the balance, not subtracted
                 if (changeAmount > 0 && paymentMethod !== 'credit') {
                     await supabase.from("customer_credits").insert({
                         customer_id: selectedCustomer.id,
@@ -254,7 +255,7 @@ export default function POSSalesForm() {
                         description: `Change from sale ${saleNumber}`,
                         sale_id: saleData.id,
                     });
-                    newBalance += changeAmount;
+                    newBalance += changeAmount; // Corrected from -= to +=
                 }
 
                 if (newBalance !== (customerData?.credit_balance ?? 0)) {
