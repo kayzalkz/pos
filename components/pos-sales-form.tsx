@@ -70,11 +70,14 @@ export default function POSSalesForm() {
     const [categories, setCategories] = useState<Category[]>([]);
     const [selectedCategory, setSelectedCategory] = useState<string>('all');
     const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null)
+    const [creditApplied, setCreditApplied] = useState(0)
 
-    const isAdmin = user?.role?.trim().toLowerCase() === "admin"
+    const isAdmin = user?.role === "admin"
     const totalAmount = cart.reduce((sum, item) => sum + item.total, 0)
+    const amountDue = totalAmount - creditApplied;
     const paidAmountNum = Number.parseFloat(paidAmount) || 0
-    const changeAmount = paidAmountNum > totalAmount ? paidAmountNum - totalAmount : 0
+    const changeAmount = paidAmountNum > amountDue ? paidAmountNum - amountDue : 0
+
 
     // Effects
     useEffect(() => {
@@ -85,12 +88,21 @@ export default function POSSalesForm() {
     }, [])
     
     useEffect(() => {
+        if (selectedCustomer && selectedCustomer.credit_balance > 0) {
+            const creditToApply = Math.min(totalAmount, selectedCustomer.credit_balance);
+            setCreditApplied(creditToApply);
+        } else {
+            setCreditApplied(0);
+        }
+    }, [selectedCustomer, totalAmount]);
+    
+    useEffect(() => {
         if (paymentMethod === "cash" || paymentMethod === "kbz") {
-            setPaidAmount(totalAmount.toString())
+            setPaidAmount(amountDue.toFixed(2))
         } else if (paymentMethod === "credit") {
             setPaidAmount("0")
         }
-    }, [paymentMethod, totalAmount])
+    }, [paymentMethod, amountDue]);
 
     // Data Fetching Functions
     const fetchCompanyProfile = async () => {
@@ -99,12 +111,7 @@ export default function POSSalesForm() {
     };
 
     const fetchProducts = async () => {
-        const { data } = await supabase
-        .from("products")
-        .select(`*, categories (name)`)
-        .eq('is_active', true)
-        .gt("stock_quantity", 0)
-        .order("name");
+        const { data } = await supabase.from("products").select(`*, categories (name)`).eq('is_active', true).gt("stock_quantity", 0).order("name");
         if (data) setProducts(data as Product[])
     }
 
@@ -162,13 +169,13 @@ export default function POSSalesForm() {
         if (cart.length === 0) return false;
 
         if (paymentMethod === "credit") {
-            if (!selectedCustomer || paidAmountNum > totalAmount) return false;
+            if (!selectedCustomer || paidAmountNum > amountDue) return false;
             return true;
         }
 
         if (paymentMethod === 'cash' || paymentMethod === 'kbz') {
-            if (paidAmountNum < totalAmount) return false;
-            if (paidAmountNum > totalAmount && !selectedCustomer) return false;
+            if (paidAmountNum < amountDue) return false;
+            if (paidAmountNum > amountDue && !selectedCustomer) return false;
             if (paymentMethod === "kbz" && !kbzPhoneNumber) return false;
         }
         
@@ -184,19 +191,15 @@ export default function POSSalesForm() {
         setLoading(true);
         try {
             const saleNumber = `SALE-${Date.now()}`;
-            const { data: saleData, error: saleError } = await supabase
-                .from("sales")
-                .insert({
-                    sale_number: saleNumber,
-                    customer_id: selectedCustomer?.id,
-                    total_amount: totalAmount,
-                    paid_amount: paidAmountNum,
-                    change_amount: changeAmount,
-                    payment_method: paymentMethod,
-                    created_by: user?.id,
-                })
-                .select()
-                .single();
+            const { data: saleData, error: saleError } = await supabase.from("sales").insert({
+                sale_number: saleNumber,
+                customer_id: selectedCustomer?.id,
+                total_amount: totalAmount,
+                paid_amount: paidAmountNum,
+                change_amount: changeAmount,
+                payment_method: paymentMethod,
+                created_by: user?.id,
+            }).select().single();
 
             if (saleError) throw saleError;
 
@@ -213,21 +216,33 @@ export default function POSSalesForm() {
                 await supabase.from("products").update({ stock_quantity: item.product.stock_quantity - item.quantity }).eq("id", item.product.id);
             }
 
+            let finalCustomerBalance: number | undefined;
             if (selectedCustomer) {
                 const { data: customerData } = await supabase.from("customers").select("credit_balance").eq("id", selectedCustomer.id).single();
                 let newBalance = customerData?.credit_balance ?? 0;
 
+                if (creditApplied > 0) {
+                    await supabase.from("customer_credits").insert({
+                        customer_id: selectedCustomer.id,
+                        amount: creditApplied,
+                        type: "debit",
+                        description: `Credit applied to sale ${saleNumber}`,
+                        sale_id: saleData.id,
+                    });
+                    newBalance -= creditApplied;
+                }
+
                 if (paymentMethod === "credit") {
-                    const creditUsed = totalAmount - paidAmountNum;
-                    if (creditUsed > 0) {
+                    const debtAdded = amountDue - paidAmountNum;
+                    if (debtAdded > 0) {
                         await supabase.from("customer_credits").insert({
                             customer_id: selectedCustomer.id,
-                            amount: creditUsed,
+                            amount: debtAdded,
                             type: "debit",
-                            description: `Credit sale: ${saleNumber}`,
+                            description: `Debt from sale ${saleNumber}`,
                             sale_id: saleData.id,
                         });
-                        newBalance += creditUsed;
+                        newBalance -= debtAdded;
                     }
                 }
 
@@ -239,22 +254,43 @@ export default function POSSalesForm() {
                         description: `Change from sale ${saleNumber}`,
                         sale_id: saleData.id,
                     });
-                    newBalance -= changeAmount;
+                    newBalance += changeAmount;
                 }
 
                 if (newBalance !== (customerData?.credit_balance ?? 0)) {
-                    await supabase.from("customers").update({ credit_balance: Math.max(0, newBalance) }).eq("id", selectedCustomer.id);
+                    await supabase.from("customers").update({ credit_balance: newBalance }).eq("id", selectedCustomer.id);
                 }
+                finalCustomerBalance = newBalance;
             }
 
             printReceipt(saleData, cart);
 
+            setProducts(currentProducts => {
+                const productsMap = new Map(currentProducts.map(p => [p.id, { ...p }]));
+                cart.forEach(cartItem => {
+                    const product = productsMap.get(cartItem.product.id);
+                    if (product) {
+                        product.stock_quantity -= cartItem.quantity;
+                    }
+                });
+                return Array.from(productsMap.values()).filter(p => p.stock_quantity > 0);
+            });
+
+            if (selectedCustomer && finalCustomerBalance !== undefined) {
+                setCustomers(currentCustomers => 
+                    currentCustomers.map(c => 
+                        c.id === selectedCustomer.id 
+                            ? { ...c, credit_balance: finalCustomerBalance } 
+                            : c
+                    )
+                );
+            }
+            
             setCart([]);
             setPaidAmount("");
             setKbzPhoneNumber("");
             setSelectedCustomer(null);
-            await fetchProducts();
-            await fetchCustomers();
+
         } catch (error) {
             console.error("Error processing sale:", error);
             alert("An error occurred while processing the sale.");
@@ -264,9 +300,8 @@ export default function POSSalesForm() {
     };
     
     const printReceipt = (sale: any, items: CartItem[]) => {
-        const printWindow = window.open("", "_blank")
+        const printWindow = window.open("", "_blank");
         if (!printWindow) return;
-
         const receiptHTML = `
         <html>
           <head>
@@ -359,7 +394,6 @@ export default function POSSalesForm() {
           </body>
         </html>
         `;
-
         printWindow.document.write(receiptHTML);
         printWindow.document.close();
     }
@@ -427,7 +461,6 @@ export default function POSSalesForm() {
                     </div>
                 </div>
             </div>
-
             <div className="w-2/5 bg-white p-6 flex flex-col shadow-lg">
                 <div className="flex-1 flex flex-col min-h-0">
                     <div className="flex items-center space-x-3 mb-4">
@@ -444,16 +477,17 @@ export default function POSSalesForm() {
                             </SelectTrigger>
                             <SelectContent>
                                 {customers.map((customer) => (
-                                <SelectItem key={customer.id} value={customer.id}>
-                                    {customer.name} {customer.credit_balance > 0 && `(Owes: ${customer.credit_balance.toLocaleString()} MMK)`}
-                                </SelectItem>
+                                    <SelectItem key={customer.id} value={customer.id}>
+                                        {customer.name} {
+                                            customer.credit_balance > 0 ? `(Credit: ${customer.credit_balance.toLocaleString()} MMK)` :
+                                            customer.credit_balance < 0 ? `(Owes: ${Math.abs(customer.credit_balance).toLocaleString()} MMK)` : ''
+                                        }
+                                    </SelectItem>
                                 ))}
                             </SelectContent>
                         </Select>
                     </div>
-                    
                     <h2 className="text-xl font-bold border-b pb-2 mb-4 text-gray-700">Current Order</h2>
-                    
                     <div className="flex-1 overflow-y-auto space-y-4 pr-2">
                         {cart.length === 0 ? (
                             <div className="flex flex-col items-center justify-center h-full text-gray-400">
@@ -480,27 +514,28 @@ export default function POSSalesForm() {
                         )}
                     </div>
                 </div>
-
                 <div className="mt-auto border-t pt-4 space-y-4">
                     <div className="space-y-2 text-md">
                         <div className="flex justify-between text-gray-600">
                             <span>Subtotal</span>
                             <span className="font-medium">{totalAmount.toLocaleString()} MMK</span>
                         </div>
+                        {creditApplied > 0 && (
+                            <div className="flex justify-between text-blue-600">
+                                <span>Credit Applied</span>
+                                <span className="font-medium">- {creditApplied.toLocaleString()} MMK</span>
+                            </div>
+                        )}
                         <div className="flex justify-between font-bold text-xl border-t pt-2">
-                            <span>Total</span>
-                            <span>{totalAmount.toLocaleString()} MMK</span>
+                            <span>Amount Due</span>
+                            <span>{amountDue.toLocaleString()} MMK</span>
                         </div>
                     </div>
-
-                    <div className="space-y-3">
-                        <div className="grid grid-cols-3 gap-2">
-                            <Button size="lg" variant={paymentMethod === "cash" ? "default" : "outline"} onClick={() => setPaymentMethod("cash")}> <Banknote className="h-5 w-5 mr-2" /> Cash </Button>
-                            <Button size="lg" variant={paymentMethod === "kbz" ? "default" : "outline"} onClick={() => setPaymentMethod("kbz")}> <Smartphone className="h-5 w-5 mr-2" /> KBZ Pay </Button>
-                            <Button size="lg" variant={paymentMethod === "credit" ? "default" : "outline"} onClick={() => setPaymentMethod("credit")}> <CreditCard className="h-5 w-5 mr-2" /> Credit </Button>
-                        </div>
+                    <div className="grid grid-cols-3 gap-2">
+                        <Button size="lg" variant={paymentMethod === "cash" ? "default" : "outline"} onClick={() => setPaymentMethod("cash")}> <Banknote className="h-5 w-5 mr-2" /> Cash </Button>
+                        <Button size="lg" variant={paymentMethod === "kbz" ? "default" : "outline"} onClick={() => setPaymentMethod("kbz")}> <Smartphone className="h-5 w-5 mr-2" /> KBZ Pay </Button>
+                        <Button size="lg" variant={paymentMethod === "credit" ? "default" : "outline"} onClick={() => setPaymentMethod("credit")}> <CreditCard className="h-5 w-5 mr-2" /> Credit </Button>
                     </div>
-                    
                     <div>
                         <Input
                             type="number"
@@ -509,10 +544,8 @@ export default function POSSalesForm() {
                             value={paidAmount}
                             onChange={(e) => setPaidAmount(e.target.value)}
                         />
-                        {paidAmountNum > totalAmount && !selectedCustomer && (paymentMethod === 'cash' || paymentMethod === 'kbz') && (
-                            <p className="text-sm text-red-600 mt-1">
-                                Please select a customer to credit the change amount.
-                            </p>
+                        {paidAmountNum > amountDue && !selectedCustomer && (paymentMethod === 'cash' || paymentMethod === 'kbz') && (
+                            <p className="text-sm text-red-600 mt-1">Please select a customer to credit the change amount.</p>
                         )}
                          {changeAmount > 0 && (
                             <p className="text-right text-green-600 mt-1 font-medium">
@@ -520,7 +553,6 @@ export default function POSSalesForm() {
                             </p>
                         )}
                     </div>
-
                     <Button 
                         onClick={processSale} 
                         disabled={!canCompleteSale() || loading} 
