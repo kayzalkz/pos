@@ -10,7 +10,16 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { Download, Calendar, Loader2 } from "lucide-react"
 
 // Interfaces
-interface SaleTransaction { id: string; sale_number: string; total_amount: number; created_at: string; customers: { name: string } | null; }
+interface SaleTransaction { 
+  id: string; 
+  sale_number: string; 
+  total_amount: number; 
+  created_at: string; 
+  payment_method: string;
+  paid_amount: number;
+  change_amount: number;
+  customers: { name: string } | null; 
+}
 interface ReportMetrics { totalRevenue: number; totalProfit: number; totalOrders: number; }
 interface DailyData { date: string; revenue: number; profit: number; }
 interface TopProduct { name: string; quantity_sold: number; revenue: number; profit: number; }
@@ -32,9 +41,6 @@ export default function ReportsPage() {
 
   useEffect(() => {
     fetchCompanyProfile();
-  }, [])
-
-  useEffect(() => {
     fetchReportData()
   }, [dateRange, topN])
   
@@ -49,11 +55,12 @@ export default function ReportsPage() {
       const { data: sales, error: salesError } = await supabase
         .from('sales')
         .select(`
-          id, total_amount, created_at, customers(name),
+          id, sale_number, total_amount, created_at, payment_method, paid_amount, change_amount, customers(name),
           sale_items( quantity, unit_price, total_price, products(name, cost_price) )
         `)
         .gte('created_at', dateRange.startDate)
-        .lte('created_at', `${dateRange.endDate}T23:59:59`);
+        .lte('created_at', `${dateRange.endDate}T23:59:59`)
+        .order('created_at', { ascending: false });
 
       if (salesError) throw salesError;
       
@@ -63,8 +70,7 @@ export default function ReportsPage() {
       const totalRevenue = sales.reduce((sum, sale) => sum + sale.total_amount, 0);
       const totalProfit = allItems.reduce((sum, item: any) => {
           const cost = item.products?.cost_price || 0;
-          const profitPerItem = item.unit_price - cost;
-          return sum + (profitPerItem * item.quantity);
+          return sum + ((item.unit_price - cost) * item.quantity);
       }, 0);
       setMetrics({ totalRevenue, totalProfit, totalOrders: sales.length });
 
@@ -76,15 +82,14 @@ export default function ReportsPage() {
           const existing = productMap.get(name) || { name, quantity_sold: 0, revenue: 0, profit: 0 };
           existing.quantity_sold += item.quantity;
           existing.revenue += item.total_price;
-          const cost = item.products.cost_price || 0;
-          existing.profit += (item.unit_price - cost) * item.quantity;
+          existing.profit += ((item.unit_price - (item.products.cost_price || 0)) * item.quantity);
           productMap.set(name, existing);
       });
       const sortedProducts = Array.from(productMap.values()).sort((a, b) => b.revenue - a.revenue).slice(0, topN);
       setTopProducts(sortedProducts);
       
       // 3. Set Recent Sales
-      setRecentSales(sales.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 50));
+      setRecentSales(sales.slice(0, 50));
 
     } catch(error) {
         console.error("Error fetching report data:", error);
@@ -132,13 +137,11 @@ export default function ReportsPage() {
         alert("Please disable your pop-up blocker for this site to print receipts.");
         return;
     }
-
-    printWindow.document.write('<html><body><h2>Loading receipt... Please wait.</h2></body></html>');
+    printWindow.document.write('<html><body><h2>Loading receipt...</h2></body></html>');
 
     const { data: saleItemsData, error } = await supabase.from('sale_items').select('*, products(*)').eq('sale_id', sale.id);
-    
-    if (error || !saleItemsData || saleItemsData.length === 0) {
-        printWindow.document.body.innerHTML = '<h2>Error: Could not load sale details to reprint.</h2>';
+    if (error || !saleItemsData) {
+        printWindow.document.body.innerHTML = '<h2>Error: Could not load sale details.</h2>';
         return;
     }
 
@@ -170,7 +173,9 @@ export default function ReportsPage() {
             .item-header { font-weight: bold; margin-bottom: 5px; font-size: 10px; text-transform: uppercase; }
             .item { margin-bottom: 3px; font-size: 11px; }
             .totals-section { margin-top: 15px; }
-            .total-line { font-weight: bold; font-size: 13px; border-top: 1px solid #000; padding-top: 5px; margin-top: 8px; display: flex; justify-content: space-between; }
+            .payment-info { margin-top: 15px; padding-top: 10px; border-top: 1px dashed #000; }
+            .total-line { display: flex; justify-content: space-between; margin-bottom: 3px; }
+            .grand-total { font-weight: bold; font-size: 13px; border-top: 1px solid #000; padding-top: 5px; margin-top: 8px; }
         </style>
         </head>
         <body>
@@ -195,10 +200,21 @@ export default function ReportsPage() {
                 `).join("")}
             </div>
             <div class="totals-section">
-                <div class="total-line">
+                <div class="total-line grand-total">
                     <span>TOTAL:</span>
                     <span>${sale.total_amount.toLocaleString()} MMK</span>
                 </div>
+            </div>
+            <div class="payment-info">
+                <div class="total-line">
+                    <span>Payment:</span>
+                    <span>${sale.payment_method.toUpperCase()}</span>
+                </div>
+                <div class="total-line">
+                    <span>Paid:</span>
+                    <span>${sale.paid_amount.toLocaleString()} MMK</span>
+                </div>
+                ${sale.change_amount > 0 ? `<div class="total-line"><span>Change:</span><span>${sale.change_amount.toLocaleString()} MMK</span></div>` : ""}
             </div>
             <script>
                 window.onload = function() { window.print(); window.onafterprint = function() { window.close(); } }
@@ -301,7 +317,7 @@ export default function ReportsPage() {
                 </Button>
             </CardHeader>
             <CardContent>
-                <div className="overflow-y-auto max-h-[500px]">
+                <div className="overflow-y-auto max-h-[60vh]">
                     <table className="min-w-full divide-y divide-gray-200">
                         <thead className="bg-gray-50 sticky top-0">
                             <tr>
