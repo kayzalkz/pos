@@ -83,11 +83,11 @@ export default function POSSalesForm() {
     const changeAmount = paidAmountNum > amountDue ? paidAmountNum - amountDue : 0
 
     useEffect(() => {
-        fetchProducts()
-        fetchCustomers()
-        fetchCategories()
-        fetchCompanyProfile()
-        fetchRecentSales()
+        fetchProducts();
+        fetchCustomers();
+        fetchCategories();
+        fetchCompanyProfile();
+        fetchRecentSales();
     }, [])
     
     useEffect(() => {
@@ -109,7 +109,7 @@ export default function POSSalesForm() {
 
     const fetchCompanyProfile = async () => {
         const { data } = await supabase.from("company_profile").select("*").single();
-        if (data) setCompanyProfile(data);
+        if (data) setCompanyProfile(data as CompanyProfile);
     };
 
     const fetchProducts = async () => {
@@ -198,25 +198,107 @@ export default function POSSalesForm() {
         setLoading(true);
         try {
             const saleNumber = `SALE-${Date.now()}`;
-            const { data: saleData } = await supabase.from("sales").insert({ /* ... */ }).select().single();
-            const saleItems = cart.map((item) => ({ /* ... */ }));
+            const { data: saleData, error: saleError } = await supabase.from("sales").insert({
+                sale_number: saleNumber,
+                customer_id: selectedCustomer?.id,
+                total_amount: totalAmount,
+                paid_amount: paidAmountNum,
+                change_amount: changeAmount,
+                payment_method: paymentMethod,
+                created_by: user?.id,
+            }).select('*, customers(name)').single();
+
+            if (saleError) throw saleError;
+
+            const saleItems = cart.map((item) => ({
+                sale_id: saleData.id,
+                product_id: item.product.id,
+                quantity: item.quantity,
+                unit_price: item.product.selling_price,
+                total_price: item.total,
+            }));
             await supabase.from("sale_items").insert(saleItems);
-            for (const item of cart) { /* ... */ }
+
+            for (const item of cart) {
+                await supabase.from("products").update({ stock_quantity: item.product.stock_quantity - item.quantity }).eq("id", item.product.id);
+            }
 
             let finalCustomerBalance: number | undefined;
-            if (selectedCustomer) { /* ... balance logic ... */ }
+            if (selectedCustomer) {
+                const { data: customerData } = await supabase.from("customers").select("credit_balance").eq("id", selectedCustomer.id).single();
+                let newBalance = customerData?.credit_balance ?? 0;
+
+                if (creditApplied > 0) {
+                    await supabase.from("customer_credits").insert({
+                        customer_id: selectedCustomer.id,
+                        amount: creditApplied,
+                        type: "debit",
+                        description: `Credit applied to sale ${saleNumber}`,
+                        sale_id: saleData.id,
+                    });
+                    newBalance -= creditApplied;
+                }
+
+                if (paymentMethod === "credit") {
+                    const debtAdded = amountDue - paidAmountNum;
+                    if (debtAdded > 0) {
+                        await supabase.from("customer_credits").insert({
+                            customer_id: selectedCustomer.id,
+                            amount: debtAdded,
+                            type: "debit",
+                            description: `Debt from sale ${saleNumber}`,
+                            sale_id: saleData.id,
+                        });
+                        newBalance -= debtAdded;
+                    }
+                }
+
+                if (changeAmount > 0 && paymentMethod !== 'credit') {
+                    await supabase.from("customer_credits").insert({
+                        customer_id: selectedCustomer.id,
+                        amount: changeAmount,
+                        type: 'credit',
+                        description: `Overpayment/change from sale ${saleNumber}`,
+                        sale_id: saleData.id,
+                    });
+                    newBalance += changeAmount;
+                }
+
+                if (newBalance !== (customerData?.credit_balance ?? 0)) {
+                    await supabase.from("customers").update({ credit_balance: newBalance }).eq("id", selectedCustomer.id);
+                }
+                finalCustomerBalance = newBalance;
+            }
 
             printReceipt(saleData, cart);
 
-            setProducts(currentProducts => { /* ... */ });
-            if (selectedCustomer && finalCustomerBalance !== undefined) { /* ... */ }
+            setProducts(currentProducts => {
+                const productsMap = new Map(currentProducts.map(p => [p.id, { ...p }]));
+                cart.forEach(cartItem => {
+                    const product = productsMap.get(cartItem.product.id);
+                    if (product) {
+                        product.stock_quantity -= cartItem.quantity;
+                    }
+                });
+                return Array.from(productsMap.values()).filter(p => p.stock_quantity > 0);
+            });
+
+            if (selectedCustomer && finalCustomerBalance !== undefined) {
+                setCustomers(currentCustomers => 
+                    currentCustomers.map(c => 
+                        c.id === selectedCustomer.id 
+                            ? { ...c, credit_balance: finalCustomerBalance } 
+                            : c
+                    )
+                );
+            }
             
             setCart([]);
             setPaidAmount("");
             setKbzPhoneNumber("");
             setSelectedCustomer(null);
             
-            await fetchRecentSales(); // Refresh the recent sales list
+            await fetchRecentSales();
 
         } catch (error) {
             console.error("Error processing sale:", error);
@@ -228,47 +310,55 @@ export default function POSSalesForm() {
     
     const printReceipt = (sale: any, items: CartItem[]) => {
         const printWindow = window.open("", "_blank");
-        if (!printWindow) return;
+        if (!printWindow) {
+            alert("Please disable your pop-up blocker to print receipts.");
+            return;
+        }
         const receiptHTML = `
         <html>
             <head>
-            <title>Receipt - ${sale.sale_number}</title>
-            <style>
-                * { margin: 0; padding: 0; box-sizing: border-box; }
-                body { font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; max-width: 300px; margin: 0 auto; padding: 10px; background: white; }
-                .logo-container { text-align: center; margin-bottom: 10px; }
-                .logo-container img { max-width: 120px; max-height: 80px; object-fit: contain; }
-                .receipt-header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 15px; }
-                .company-name { font-size: 16px; font-weight: bold; margin-bottom: 5px; text-transform: uppercase; }
-                .company-info { font-size: 10px; line-height: 1.3; margin-bottom: 8px; }
-                .sale-info { margin-bottom: 10px; font-size: 11px; }
-                .sale-info div { display: flex; justify-content: space-between; margin-bottom: 2px; }
-                .items-section { border-top: 1px dashed #000; border-bottom: 1px dashed #000; padding: 10px 0; margin: 15px 0; }
-                .item-header, .item { display: flex; justify-content: space-between; }
-                .item-header span:first-child, .item .item-name { flex-grow: 1; text-align: left; margin-right: 5px; word-break: break-word; }
-                .item-header span:nth-child(2), .item .item-qty { width: 35px; text-align: center; flex-shrink: 0; }
-                .item-header span:last-child, .item .item-price { width: 70px; text-align: right; flex-shrink: 0; }
-                .item-header { font-weight: bold; margin-bottom: 5px; font-size: 10px; text-transform: uppercase; }
-                .item { margin-bottom: 3px; font-size: 11px; }
-                .totals-section { margin-top: 15px; }
-                .total-line { display: flex; justify-content: space-between; margin-bottom: 3px; font-size: 11px; }
-                .total-line.grand-total { font-weight: bold; font-size: 13px; border-top: 1px solid #000; padding-top: 5px; margin-top: 8px; }
-                .payment-info { margin-top: 15px; padding-top: 10px; border-top: 1px dashed #000; }
-                .footer { text-align: center; margin-top: 20px; padding-top: 10px; border-top: 2px solid #000; font-size: 10px; }
-                .thank-you { font-weight: bold; margin-bottom: 5px; }
-                @media print { body { margin: 0; padding: 5px; } }
-            </style>
+                <title>Receipt - ${sale.sale_number}</title>
+                <style>
+                    * { margin: 0; padding: 0; box-sizing: border-box; }
+                    body { font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; max-width: 300px; margin: 0 auto; padding: 10px; background: white; }
+                    .logo-container { text-align: center; margin-bottom: 10px; }
+                    .logo-container img { max-width: 120px; max-height: 80px; object-fit: contain; }
+                    .receipt-header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 15px; }
+                    .company-name { font-size: 16px; font-weight: bold; margin-bottom: 5px; text-transform: uppercase; }
+                    .company-info { font-size: 10px; line-height: 1.3; margin-bottom: 8px; }
+                    .sale-info { margin-bottom: 10px; font-size: 11px; }
+                    .sale-info div { display: flex; justify-content: space-between; margin-bottom: 2px; }
+                    .items-section { border-top: 1px dashed #000; border-bottom: 1px dashed #000; padding: 10px 0; margin: 15px 0; }
+                    .item-header, .item { display: flex; justify-content: space-between; }
+                    .item-header span:first-child, .item .item-name { flex-grow: 1; text-align: left; margin-right: 5px; word-break: break-word; }
+                    .item-header span:nth-child(2), .item .item-qty { width: 35px; text-align: center; flex-shrink: 0; }
+                    .item-header span:last-child, .item .item-price { width: 70px; text-align: right; flex-shrink: 0; }
+                    .item-header { font-weight: bold; margin-bottom: 5px; font-size: 10px; text-transform: uppercase; }
+                    .item { margin-bottom: 3px; font-size: 11px; }
+                    .totals-section { margin-top: 15px; }
+                    .total-line { display: flex; justify-content: space-between; margin-bottom: 3px; font-size: 11px; }
+                    .total-line.grand-total { font-weight: bold; font-size: 13px; border-top: 1px solid #000; padding-top: 5px; margin-top: 8px; }
+                    .payment-info { margin-top: 15px; padding-top: 10px; border-top: 1px dashed #000; }
+                    .footer { text-align: center; margin-top: 20px; padding-top: 10px; border-top: 2px solid #000; font-size: 10px; }
+                    .thank-you { font-weight: bold; margin-bottom: 5px; }
+                    @media print { body { margin: 0; padding: 5px; } }
+                </style>
             </head>
             <body>
                 ${companyProfile?.logo_url ? `<div class="logo-container"><img src="${companyProfile.logo_url}" alt="Company Logo"></div>` : ""}
                 <div class="receipt-header">
                     <div class="company-name">${companyProfile?.company_name || "POS SYSTEM"}</div>
-                    <div class="company-info">${companyProfile?.address || ""}</div>
+                    <div class="company-info">
+                        ${companyProfile?.address ? `${companyProfile.address}<br>` : ""}
+                        ${companyProfile?.phone ? `Tel: ${companyProfile.phone}<br>` : ""}
+                        ${companyProfile?.email ? `Email: ${companyProfile.email}<br>` : ""}
+                        ${companyProfile?.tax_number ? `Tax No: ${companyProfile.tax_number}` : ""}
+                    </div>
                 </div>
                 <div class="sale-info">
-                    <div><span>Voucher:</span><span>${sale.sale_number}</span></div>
+                    <div><span>Voucher No:</span><span>${sale.sale_number}</span></div>
                     <div><span>Date:</span><span>${new Date(sale.created_at).toLocaleString()}</span></div>
-                    ${selectedCustomer ? `<div><span>Customer:</span><span>${selectedCustomer.name}</span></div>` : ""}
+                    ${sale.customers ? `<div><span>Customer:</span><span>${sale.customers.name}</span></div>` : ""}
                 </div>
                 <div class="items-section">
                     <div class="item-header"><span>ITEM</span><span>QTY</span><span>AMOUNT</span></div>
@@ -289,14 +379,14 @@ export default function POSSalesForm() {
                 <div class="payment-info">
                     <div class="total-line">
                         <span>Payment:</span>
-                        <span>${paymentMethod.toUpperCase()}</span>
+                        <span>${sale.payment_method.toUpperCase()}</span>
                     </div>
-                    ${paymentMethod === "kbz" && kbzPhoneNumber ? `<div class="total-line"><span>KBZ Phone:</span><span>${kbzPhoneNumber}</span></div>` : ""}
+                    ${sale.payment_method === "kbz" && kbzPhoneNumber ? `<div class="total-line"><span>KBZ Phone:</span><span>${kbzPhoneNumber}</span></div>` : ""}
                     <div class="total-line">
                         <span>Paid:</span>
-                        <span>${paidAmountNum.toLocaleString()} MMK</span>
+                        <span>${sale.paid_amount.toLocaleString()} MMK</span>
                     </div>
-                    ${changeAmount > 0 ? `<div class="total-line"><span>Change:</span><span>${changeAmount.toLocaleString()} MMK</span></div>` : ""}
+                    ${sale.change_amount > 0 ? `<div class="total-line"><span>Change:</span><span>${sale.change_amount.toLocaleString()} MMK</span></div>` : ""}
                 </div>
                 <div class="footer">
                     <div class="thank-you">THANK YOU!</div>
