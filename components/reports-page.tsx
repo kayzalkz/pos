@@ -4,38 +4,17 @@ import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { supabase } from "@/lib/supabase"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts"
-import { TrendingUp, DollarSign, ShoppingCart, Download, Calendar, Loader2 } from "lucide-react"
+import { Download, Calendar, Loader2 } from "lucide-react"
 
 // Interfaces
-interface SaleTransaction {
-  id: string
-  sale_number: string
-  total_amount: number
-  created_at: string
-  customers: { name: string } | null
-}
-interface ReportMetrics {
-  totalRevenue: number
-  totalProfit: number
-  totalOrders: number
-}
-interface DailySales {
-  date: string
-  revenue: number
-  profit: number
-}
-interface TopProduct {
-    name: string;
-    quantity_sold: number;
-    revenue: number;
-    profit: number;
-}
-interface CompanyProfile {
-  company_name: string; address: string; phone: string; email: string;
-  website: string; tax_number: string; logo_url: string;
-}
+interface SaleTransaction { id: string; sale_number: string; total_amount: number; created_at: string; customers: { name: string } | null; }
+interface ReportMetrics { totalRevenue: number; totalProfit: number; totalOrders: number; }
+interface DailyData { date: string; revenue: number; profit: number; }
+interface TopProduct { name: string; quantity_sold: number; revenue: number; profit: number; }
+interface CompanyProfile { company_name: string; address: string; phone: string; email: string; website: string; tax_number: string; logo_url: string; }
 
 export default function ReportsPage() {
   const [loading, setLoading] = useState(true)
@@ -45,10 +24,11 @@ export default function ReportsPage() {
   })
   
   const [metrics, setMetrics] = useState<ReportMetrics>({ totalRevenue: 0, totalProfit: 0, totalOrders: 0 })
-  const [dailySales, setDailySales] = useState<DailySales[]>([])
+  const [dailyData, setDailyData] = useState<DailyData[]>([])
   const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
   const [recentSales, setRecentSales] = useState<SaleTransaction[]>([])
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null);
+  const [topN, setTopN] = useState(5);
 
   useEffect(() => {
     fetchCompanyProfile();
@@ -56,7 +36,7 @@ export default function ReportsPage() {
 
   useEffect(() => {
     fetchReportData()
-  }, [dateRange])
+  }, [dateRange, topN])
   
   const fetchCompanyProfile = async () => {
     const { data } = await supabase.from("company_profile").select("*").single();
@@ -64,62 +44,54 @@ export default function ReportsPage() {
   };
   
   const fetchReportData = async () => {
-    setLoading(true)
-    await Promise.all([
-      fetchMetricsAndDailySales(),
-      fetchTopProducts(),
-      fetchRecentSales(),
-    ])
-    setLoading(false)
-  }
-
-  const fetchMetricsAndDailySales = async () => {
-    const { data, error } = await supabase.rpc('get_daily_sales_and_profit', {
-        start_date: dateRange.startDate,
-        end_date: dateRange.endDate
-    });
-
-    if (error) {
-        console.error("Error fetching daily sales data:", error);
-        setDailySales([]);
-        setMetrics({ totalRevenue: 0, totalProfit: 0, totalOrders: 0 });
-        return;
-    }
-    
-    const formattedData = data.map((d: any) => ({
-        date: new Date(d.sale_day).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-        revenue: d.total_revenue,
-        profit: d.total_profit
-    }));
-    setDailySales(formattedData);
-
-    const totalRevenue = data.reduce((sum: number, day: any) => sum + (day.total_revenue || 0), 0);
-    const totalProfit = data.reduce((sum: number, day: any) => sum + (day.total_profit || 0), 0);
-    const totalOrders = data.reduce((sum: number, day: any) => sum + (day.order_count || 0), 0);
-    setMetrics({ totalRevenue, totalProfit, totalOrders });
-  };
-
-  const fetchTopProducts = async () => {
-    const { data, error } = await supabase.rpc('get_top_selling_products', {
-        start_date: dateRange.startDate,
-        end_date: dateRange.endDate,
-        limit_count: 5
-    });
-    if (error) console.error("Error fetching top products:", error);
-    else setTopProducts(data || []);
-  };
-
-  const fetchRecentSales = async () => {
-    const { data, error } = await supabase
+    setLoading(true);
+    try {
+      const { data: sales, error: salesError } = await supabase
         .from('sales')
-        .select('id, sale_number, total_amount, created_at, customers(name)')
+        .select(`
+          id, total_amount, created_at, customers(name),
+          sale_items( quantity, unit_price, total_price, products(name, cost_price) )
+        `)
         .gte('created_at', dateRange.startDate)
-        .lte('created_at', `${dateRange.endDate}T23:59:59`)
-        .order('created_at', { ascending: false })
-        .limit(50);
-    if (error) console.error("Error fetching recent sales:", error);
-    else setRecentSales(data || []);
-  };
+        .lte('created_at', `${dateRange.endDate}T23:59:59`);
+
+      if (salesError) throw salesError;
+      
+      const allItems = sales.flatMap(s => s.sale_items);
+
+      // 1. Calculate Metrics
+      const totalRevenue = sales.reduce((sum, sale) => sum + sale.total_amount, 0);
+      const totalProfit = allItems.reduce((sum, item: any) => {
+          const cost = item.products?.cost_price || 0;
+          const profitPerItem = item.unit_price - cost;
+          return sum + (profitPerItem * item.quantity);
+      }, 0);
+      setMetrics({ totalRevenue, totalProfit, totalOrders: sales.length });
+
+      // 2. Calculate Top Products
+      const productMap = new Map<string, TopProduct>();
+      allItems.forEach((item: any) => {
+          if (!item.products) return;
+          const name = item.products.name;
+          const existing = productMap.get(name) || { name, quantity_sold: 0, revenue: 0, profit: 0 };
+          existing.quantity_sold += item.quantity;
+          existing.revenue += item.total_price;
+          const cost = item.products.cost_price || 0;
+          existing.profit += (item.unit_price - cost) * item.quantity;
+          productMap.set(name, existing);
+      });
+      const sortedProducts = Array.from(productMap.values()).sort((a, b) => b.revenue - a.revenue).slice(0, topN);
+      setTopProducts(sortedProducts);
+      
+      // 3. Set Recent Sales
+      setRecentSales(sales.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 50));
+
+    } catch(error) {
+        console.error("Error fetching report data:", error);
+    } finally {
+        setLoading(false);
+    }
+  }
 
   const handleDateFilterChange = (filter: 'today' | 'week' | 'month') => {
     const endDate = new Date();
@@ -277,15 +249,40 @@ export default function ReportsPage() {
                 <CardHeader><CardTitle>Sales & Profit Trend</CardTitle></CardHeader>
                 <CardContent>
                     <ResponsiveContainer width="100%" height={300}>
-                        <LineChart data={dailySales}><CartesianGrid /><XAxis dataKey="date" /><YAxis /><Tooltip formatter={(value: number) => `${value.toLocaleString()} MMK`} /><Line dataKey="revenue" name="Revenue" stroke="#8884d8"/><Line dataKey="profit" name="Profit" stroke="#82ca9d"/></LineChart>
+                        <LineChart data={dailyData}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="date" />
+                            <YAxis />
+                            <Tooltip formatter={(value: number) => `${value.toLocaleString()} MMK`} />
+                            <Line dataKey="revenue" name="Revenue" stroke="#8884d8"/>
+                            <Line dataKey="profit" name="Profit" stroke="#82ca9d"/>
+                        </LineChart>
                     </ResponsiveContainer>
                 </CardContent>
             </Card>
             <Card>
-                <CardHeader><CardTitle>Top 5 Selling Products</CardTitle></CardHeader>
+                <CardHeader className="flex-row justify-between items-center">
+                    <CardTitle>Top Selling Products</CardTitle>
+                    <Select value={topN.toString()} onValueChange={(val) => setTopN(Number(val))}>
+                        <SelectTrigger className="w-[120px]">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="5">Top 5</SelectItem>
+                            <SelectItem value="10">Top 10</SelectItem>
+                            <SelectItem value="20">Top 20</SelectItem>
+                        </SelectContent>
+                    </Select>
+                </CardHeader>
                 <CardContent>
                     <ResponsiveContainer width="100%" height={300}>
-                        <BarChart data={topProducts} layout="vertical"><CartesianGrid /><XAxis type="number" hide /><YAxis type="category" dataKey="name" width={120} tick={{fontSize: 12}} interval={0} /><Tooltip formatter={(value: number) => `${value.toLocaleString()} MMK`} /><Bar dataKey="revenue" name="Revenue" fill="#8884d8" /></BarChart>
+                        <BarChart data={topProducts} layout="vertical">
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis type="number" hide />
+                            <YAxis type="category" dataKey="name" width={120} tick={{fontSize: 12}} interval={0} />
+                            <Tooltip formatter={(value: number) => `${value.toLocaleString()} MMK`} />
+                            <Bar dataKey="revenue" name="Revenue" fill="#8884d8" />
+                        </BarChart>
                     </ResponsiveContainer>
                 </CardContent>
             </Card>
@@ -294,7 +291,9 @@ export default function ReportsPage() {
         <Card>
             <CardHeader className="flex-row justify-between items-center">
                 <CardTitle>Recent Sales</CardTitle>
-                <Button variant="outline" size="sm" onClick={() => exportToCsv('recent_sales', recentSales)}><Download className="w-4 h-4 mr-2" /> Export CSV</Button>
+                <Button variant="outline" size="sm" onClick={() => exportToCsv('recent_sales', recentSales)}>
+                    <Download className="w-4 h-4 mr-2" /> Export CSV
+                </Button>
             </CardHeader>
             <CardContent>
                 <div className="overflow-x-auto">
