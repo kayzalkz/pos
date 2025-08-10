@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Textarea } from "@/components/ui/textarea"
 import { supabase } from "@/lib/supabase"
 import { Building2, Save, UploadCloud, X, Loader2 } from "lucide-react"
+import { Label } from "@/components/ui/label"
 
 interface CompanyProfile {
   id?: string
@@ -24,8 +25,8 @@ export default function CompanyProfilePage() {
   const [profile, setProfile] = useState<CompanyProfile | null>(null)
   const [loading, setLoading] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [isFetching, setIsFetching] = useState(true);
 
-  // NEW: State for handling the logo file upload
   const [logoFile, setLogoFile] = useState<File | null>(null)
   const [logoPreview, setLogoPreview] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -34,15 +35,26 @@ export default function CompanyProfilePage() {
     fetchCompanyProfile()
   }, [])
 
+  // MODIFIED: This function now handles the case where no profile exists
   const fetchCompanyProfile = async () => {
-    const { data } = await supabase.from("company_profile").select("*").single()
+    setIsFetching(true);
+    const { data, error } = await supabase.from("company_profile").select("*").single()
+    
     if (data) {
       setProfile(data)
-      setLogoPreview(data.logo_url) // Set the preview to the existing logo
+      if (data.logo_url) {
+        setLogoPreview(data.logo_url)
+      }
+    } else {
+      // If no profile exists, create a default empty one so the form can be filled out
+      setProfile({
+        company_name: "", address: "", phone: "", email: "",
+        website: "", tax_number: "", logo_url: "",
+      });
     }
+    setIsFetching(false);
   }
 
-  // NEW: Handler for when a user selects an image file
   const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
@@ -51,7 +63,6 @@ export default function CompanyProfilePage() {
     }
   };
 
-  // MODIFIED: handleSubmit now includes image upload logic
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!profile) return;
@@ -60,33 +71,19 @@ export default function CompanyProfilePage() {
     let newLogoUrl = profile.logo_url;
 
     try {
-      // 1. If a new logo file was selected, upload it first
       if (logoFile) {
         const filePath = `public/${Date.now()}-${logoFile.name}`;
-        const { error: uploadError } = await supabase.storage
-          .from('company-assets') // The bucket you just created
-          .upload(filePath, logoFile);
-
+        const { error: uploadError } = await supabase.storage.from('company-assets').upload(filePath, logoFile);
         if (uploadError) throw uploadError;
-
-        const { data: urlData } = supabase.storage
-          .from('company-assets')
-          .getPublicUrl(filePath);
-        
+        const { data: urlData } = supabase.storage.from('company-assets').getPublicUrl(filePath);
         newLogoUrl = urlData.publicUrl;
       }
 
-      const updatedProfile = {
-          ...profile,
-          logo_url: newLogoUrl
-      };
+      const updatedProfile = { ...profile, logo_url: newLogoUrl };
 
-      // 2. Insert or Update the profile with the new URL
-      if (profile.id) {
-        await supabase.from("company_profile").update(updatedProfile).eq("id", profile.id)
-      } else {
-        await supabase.from("company_profile").insert(updatedProfile)
-      }
+      // Use upsert to handle both creating a new profile and updating an existing one
+      const { error } = await supabase.from("company_profile").upsert(updatedProfile, { onConflict: 'id' });
+      if (error) throw error;
 
       setSaved(true)
       setTimeout(() => setSaved(false), 3000)
@@ -95,11 +92,11 @@ export default function CompanyProfilePage() {
       console.error("Error saving company profile:", error)
     } finally {
       setLoading(false)
-      setLogoFile(null); // Clear the file after submission
+      setLogoFile(null);
     }
   }
 
-  if (!profile) {
+  if (isFetching) {
       return (
           <div className="flex-1 flex items-center justify-center">
               <Loader2 className="h-6 w-6 animate-spin" />
@@ -126,9 +123,8 @@ export default function CompanyProfilePage() {
             <CardContent>
               <form onSubmit={handleSubmit} className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    {/* Logo Uploader */}
                     <div className="md:col-span-1">
-                        <label className="text-sm font-medium mb-2 block">Company Logo</label>
+                        <Label className="mb-2 block">Company Logo</Label>
                         <div 
                             className="w-full aspect-square border-2 border-dashed rounded-lg flex items-center justify-center text-gray-400 cursor-pointer hover:bg-gray-50 relative"
                             onClick={() => fileInputRef.current?.click()}
@@ -151,7 +147,7 @@ export default function CompanyProfilePage() {
                                             setLogoFile(null);
                                             setLogoPreview(null);
                                             if (fileInputRef.current) fileInputRef.current.value = "";
-                                            setProfile({...profile, logo_url: null});
+                                            if (profile) setProfile({...profile, logo_url: null});
                                         }}
                                     ><X className="h-4 w-4" /></Button>
                                 </>
@@ -163,36 +159,35 @@ export default function CompanyProfilePage() {
                             )}
                         </div>
                     </div>
-                    {/* Company Details */}
                     <div className="md:col-span-2 space-y-4">
                         <div>
-                            <label className="text-sm font-medium">Company Name *</label>
-                            <Input value={profile.company_name} onChange={(e) => setProfile({ ...profile, company_name: e.target.value })} required />
+                            <Label htmlFor="companyName">Company Name *</Label>
+                            <Input id="companyName" value={profile?.company_name || ''} onChange={(e) => setProfile({ ...profile!, company_name: e.target.value })} required />
                         </div>
                         <div>
-                            <label className="text-sm font-medium">Phone Number</label>
-                            <Input value={profile.phone || ''} onChange={(e) => setProfile({ ...profile, phone: e.target.value })} />
+                            <Label htmlFor="phone">Phone Number</Label>
+                            <Input id="phone" value={profile?.phone || ''} onChange={(e) => setProfile({ ...profile!, phone: e.target.value })} />
                         </div>
                          <div>
-                            <label className="text-sm font-medium">Email</label>
-                            <Input type="email" value={profile.email || ''} onChange={(e) => setProfile({ ...profile, email: e.target.value })} />
+                            <Label htmlFor="email">Email</Label>
+                            <Input id="email" type="email" value={profile?.email || ''} onChange={(e) => setProfile({ ...profile!, email: e.target.value })} />
                         </div>
                     </div>
                 </div>
 
                 <div>
-                  <label className="text-sm font-medium">Address</label>
-                  <Textarea value={profile.address || ''} onChange={(e) => setProfile({ ...profile, address: e.target.value })} rows={3}/>
+                  <Label htmlFor="address">Address</Label>
+                  <Textarea id="address" value={profile?.address || ''} onChange={(e) => setProfile({ ...profile!, address: e.target.value })} rows={3}/>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="text-sm font-medium">Website</label>
-                    <Input value={profile.website || ''} onChange={(e) => setProfile({ ...profile, website: e.target.value })} />
+                    <Label htmlFor="website">Website</Label>
+                    <Input id="website" value={profile?.website || ''} onChange={(e) => setProfile({ ...profile!, website: e.target.value })} />
                   </div>
                   <div>
-                    <label className="text-sm font-medium">Tax Number</label>
-                    <Input value={profile.tax_number || ''} onChange={(e) => setProfile({ ...profile, tax_number: e.target.value })}/>
+                    <Label htmlFor="tax_number">Tax Number</Label>
+                    <Input id="tax_number" value={profile?.tax_number || ''} onChange={(e) => setProfile({ ...profile!, tax_number: e.target.value })}/>
                   </div>
                 </div>
 
