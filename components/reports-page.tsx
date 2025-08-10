@@ -5,23 +5,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { supabase } from "@/lib/supabase"
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  LineChart,
-  Line,
-} from "recharts"
-import { TrendingUp, DollarSign, Package, Users, ShoppingCart, Download, Calendar, Loader2 } from "lucide-react"
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts"
+import { TrendingUp, DollarSign, ShoppingCart, Download, Calendar, Loader2 } from "lucide-react"
 
-// Interfaces for our data structures
+// Interfaces
 interface SaleTransaction {
   id: string
   sale_number: string
@@ -29,136 +16,114 @@ interface SaleTransaction {
   created_at: string
   customers: { name: string } | null
 }
-
 interface ReportMetrics {
   totalRevenue: number
   totalProfit: number
   totalOrders: number
 }
-
 interface DailySales {
   date: string
   revenue: number
   profit: number
-  orders: number
 }
-
-interface ProductCategorySales {
-  name: string
-  revenue: number
+interface TopProduct {
+    name: string;
+    quantity_sold: number;
+    revenue: number;
+    profit: number;
 }
-
-const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884D8"];
+interface CompanyProfile {
+  company_name: string; address: string; phone: string; email: string;
+  website: string; tax_number: string; logo_url: string;
+}
 
 export default function ReportsPage() {
   const [loading, setLoading] = useState(true)
   const [dateRange, setDateRange] = useState({
-    startDate: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split("T")[0],
+    startDate: new Date(new Date().setDate(new Date().getDate() - 29)).toISOString().split("T")[0],
     endDate: new Date().toISOString().split("T")[0],
   })
   
-  // State for all our report data
   const [metrics, setMetrics] = useState<ReportMetrics>({ totalRevenue: 0, totalProfit: 0, totalOrders: 0 })
   const [dailySales, setDailySales] = useState<DailySales[]>([])
-  const [categorySales, setCategorySales] = useState<ProductCategorySales[]>([])
+  const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
   const [recentSales, setRecentSales] = useState<SaleTransaction[]>([])
-  const [companyProfile, setCompanyProfile] = useState<any>(null);
-
+  const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null);
 
   useEffect(() => {
     fetchCompanyProfile();
-  }, []);
-
-  useEffect(() => {
     fetchReportData()
   }, [dateRange])
-
+  
   const fetchCompanyProfile = async () => {
     const { data } = await supabase.from("company_profile").select("*").single();
-    if (data) setCompanyProfile(data);
+    if (data) setCompanyProfile(data as CompanyProfile);
   };
   
   const fetchReportData = async () => {
     setLoading(true)
     await Promise.all([
       fetchMetricsAndDailySales(),
-      fetchCategorySales(),
+      fetchTopProducts(),
       fetchRecentSales(),
     ])
     setLoading(false)
   }
 
   const fetchMetricsAndDailySales = async () => {
-    const { data, error } = await supabase
-      .from("sale_items")
-      .select(`
-        quantity,
-        unit_price,
-        products!inner(cost_price),
-        sales!inner(created_at, total_amount)
-      `)
-      .gte('created_at', dateRange.startDate)
-      .lte('created_at', dateRange.endDate + 'T23:59:59');
-
-    if (error) {
-      console.error("Error fetching sales metrics:", error);
-      return;
-    }
-
-    let totalRevenue = 0;
-    let totalProfit = 0;
-    const dailyData: Record<string, { revenue: number, profit: number, orders: number }> = {};
-    const saleIds = new Set<string>(); // To count unique orders
-
-    data.forEach((item: any) => {
-        const revenue = (item.unit_price || 0) * (item.quantity || 0);
-        const cost = (item.products.cost_price || 0) * (item.quantity || 0);
-        const profit = revenue - cost;
-
-        totalRevenue += revenue;
-        totalProfit += profit;
-        
-        const date = item.sales.created_at.split("T")[0];
-        if (!dailyData[date]) {
-            dailyData[date] = { revenue: 0, profit: 0, orders: 0 };
-        }
-        dailyData[date].revenue += revenue;
-        dailyData[date].profit += profit;
-        
-        // This logic approximates daily orders based on sale items
-        if (!saleIds.has(item.sales.id)) {
-            dailyData[date].orders += 1;
-            saleIds.add(item.sales.id);
-        }
+    const { data, error } = await supabase.rpc('get_daily_sales_and_profit', {
+        start_date: dateRange.startDate,
+        end_date: dateRange.endDate
     });
 
-    setMetrics({ totalRevenue, totalProfit, totalOrders: saleIds.size });
-    setDailySales(Object.entries(dailyData).map(([date, data]) => ({ date, ...data })));
+    if (error) {
+        console.error("Error fetching daily sales data:", error);
+        setDailySales([]);
+        setMetrics({ totalRevenue: 0, totalProfit: 0, totalOrders: 0 });
+        return;
+    }
+    
+    const formattedData = data.map((d: any) => ({
+        date: new Date(d.sale_day).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        revenue: d.total_revenue,
+        profit: d.total_profit
+    }));
+    setDailySales(formattedData);
+
+    const totalRevenue = data.reduce((sum: number, day: any) => sum + (day.total_revenue || 0), 0);
+    const totalProfit = data.reduce((sum: number, day: any) => sum + (day.total_profit || 0), 0);
+    const totalOrders = data.reduce((sum: number, day: any) => sum + (day.order_count || 0), 0);
+    setMetrics({ totalRevenue, totalProfit, totalOrders });
   };
 
-  const fetchCategorySales = async () => { /* ... (similar logic to above) ... */ };
+  const fetchTopProducts = async () => {
+    const { data, error } = await supabase.rpc('get_top_selling_products', {
+        start_date: dateRange.startDate,
+        end_date: dateRange.endDate,
+        limit_count: 5
+    });
+    if (error) console.error("Error fetching top products:", error);
+    else setTopProducts(data || []);
+  };
+
   const fetchRecentSales = async () => {
     const { data, error } = await supabase
         .from('sales')
         .select('id, sale_number, total_amount, created_at, customers(name)')
+        .gte('created_at', dateRange.startDate)
+        .lte('created_at', `${dateRange.endDate}T23:59:59`)
         .order('created_at', { ascending: false })
         .limit(50);
     if (error) console.error("Error fetching recent sales:", error);
     else setRecentSales(data || []);
   };
 
-  const handleDateFilterChange = (filter: 'today' | 'week' | 'month' | 'year') => {
+  const handleDateFilterChange = (filter: 'today' | 'week' | 'month') => {
     const endDate = new Date();
     let startDate = new Date();
-    if (filter === 'today') {
-        // Start date is today
-    } else if (filter === 'week') {
-        startDate.setDate(endDate.getDate() - 7);
-    } else if (filter === 'month') {
-        startDate.setMonth(endDate.getMonth() - 1);
-    } else if (filter === 'year') {
-        startDate.setFullYear(endDate.getFullYear() - 1);
-    }
+    if (filter === 'week') startDate.setDate(endDate.getDate() - 6);
+    else if (filter === 'month') startDate.setDate(endDate.getDate() - 29);
+    
     setDateRange({
         startDate: startDate.toISOString().split("T")[0],
         endDate: endDate.toISOString().split("T")[0],
@@ -172,49 +137,118 @@ export default function ReportsPage() {
         headers.join(','),
         ...data.map(row => headers.map(header => JSON.stringify(row[header])).join(','))
     ].join('\n');
-
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
-    if (link.download !== undefined) {
-        const url = URL.createObjectURL(blob);
-        link.setAttribute('href', url);
-        link.setAttribute('download', `${filename}.csv`);
-        link.style.visibility = 'hidden';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-    }
-  };
-
-  const reprintReceipt = async (saleId: string) => {
-    const { data: saleData } = await supabase.from('sales').select('*, customers(name)').eq('id', saleId).single();
-    const { data: saleItemsData } = await supabase.from('sale_items').select('*, products(*)').eq('sale_id', saleId);
-    
-    if (saleData && saleItemsData) {
-        const cartItems = saleItemsData.map(item => ({
-            product: item.products,
-            quantity: item.quantity,
-            total: item.total_price,
-        }));
-        // This reuses the same print logic from your POS form
-        // printReceipt(saleData, cartItems); // You would need to import or pass this function
-    }
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `${filename}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
   
-  if (loading) { /* ... loading component ... */ }
+  const reprintReceipt = async (sale: SaleTransaction) => {
+    const { data: saleItemsData, error } = await supabase.from('sale_items').select('*, products(*)').eq('sale_id', sale.id);
+    if (error || !saleItemsData) {
+        alert("Could not fetch sale details to reprint.");
+        return;
+    }
+
+    const cartItems = saleItemsData.map(item => ({
+        product: item.products,
+        quantity: item.quantity,
+        total: item.total_price,
+    }));
+    printReceipt(sale, cartItems);
+  };
+  
+  const printReceipt = (sale: any, items: any[]) => {
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) return;
+    const receiptHTML = `
+    <html>
+        <head>
+        <title>Receipt - ${sale.sale_number}</title>
+        <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; max-width: 300px; margin: 0 auto; padding: 10px; background: white; }
+            .logo-container { text-align: center; margin-bottom: 10px; }
+            .logo-container img { max-width: 120px; max-height: 80px; object-fit: contain; }
+            .receipt-header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 15px; }
+            .company-name { font-size: 16px; font-weight: bold; margin-bottom: 5px; text-transform: uppercase; }
+            .company-info { font-size: 10px; line-height: 1.3; margin-bottom: 8px; }
+            .receipt-title { font-size: 14px; font-weight: bold; margin: 8px 0; text-transform: uppercase; }
+            .sale-info { margin-bottom: 10px; font-size: 11px; }
+            .sale-info div { display: flex; justify-content: space-between; margin-bottom: 2px; }
+            .items-section { border-top: 1px dashed #000; border-bottom: 1px dashed #000; padding: 10px 0; margin: 15px 0; }
+            .item-header, .item { display: flex; justify-content: space-between; }
+            .item-header span:first-child, .item .item-name { flex-grow: 1; text-align: left; margin-right: 5px; word-break: break-word; }
+            .item-header span:nth-child(2), .item .item-qty { width: 35px; text-align: center; flex-shrink: 0; }
+            .item-header span:last-child, .item .item-price { width: 70px; text-align: right; flex-shrink: 0; }
+            .item-header { font-weight: bold; margin-bottom: 5px; font-size: 10px; text-transform: uppercase; }
+            .item { margin-bottom: 3px; font-size: 11px; }
+            .totals-section { margin-top: 15px; }
+            .total-line { display: flex; justify-content: space-between; margin-bottom: 3px; font-size: 11px; }
+            .total-line.grand-total { font-weight: bold; font-size: 13px; border-top: 1px solid #000; padding-top: 5px; margin-top: 8px; }
+        </style>
+        </head>
+        <body>
+            ${companyProfile?.logo_url ? `<div class="logo-container"><img src="${companyProfile.logo_url}" alt="Company Logo"></div>` : ""}
+            <div class="receipt-header">
+                <div class="company-name">${companyProfile?.company_name || "POS SYSTEM"}</div>
+                <div class="company-info">${companyProfile?.address || ""}</div>
+            </div>
+            <div class="sale-info">
+                <div><span>Voucher:</span><span>${sale.sale_number}</span></div>
+                <div><span>Date:</span><span>${new Date(sale.created_at).toLocaleString()}</span></div>
+                ${sale.customers ? `<div><span>Customer:</span><span>${sale.customers.name}</span></div>` : ""}
+            </div>
+            <div class="items-section">
+                <div class="item-header"><span>ITEM</span><span>QTY</span><span>AMOUNT</span></div>
+                ${items.map((item: any) => `
+                    <div class="item">
+                        <span class="item-name">${item.product.name}</span>
+                        <span class="item-qty">${item.quantity}</span>
+                        <span class="item-price">${item.total.toLocaleString()}</span>
+                    </div>
+                `).join("")}
+            </div>
+            <div class="totals-section">
+                <div class="total-line grand-total">
+                    <span>TOTAL:</span>
+                    <span>${sale.total_amount.toLocaleString()} MMK</span>
+                </div>
+            </div>
+            <script>
+                window.onload = function() { window.print(); window.onafterprint = function() { window.close(); } }
+            </script>
+        </body>
+    </html>`;
+    printWindow.document.write(receiptHTML);
+    printWindow.document.close();
+  }
+  
+  if (loading) {
+      return (
+        <div className="flex-1 flex items-center justify-center">
+            <Loader2 className="h-6 w-6 animate-spin mr-2" />
+            <span>Loading reports...</span>
+        </div>
+      )
+  }
 
   return (
     <div className="flex-1 flex flex-col bg-gray-50">
-      <header className="bg-white p-6 border-b">
-        <h1 className="text-2xl font-semibold text-gray-800">Sales Reports & Analytics</h1>
-        <div className="flex items-center space-x-2 mt-4">
+      <header className="bg-white p-4 border-b flex justify-between items-center">
+        <h1 className="text-xl font-semibold">Sales Reports</h1>
+        <div className="flex items-center space-x-2">
             <Input type="date" value={dateRange.startDate} onChange={e => setDateRange({...dateRange, startDate: e.target.value})} />
             <span>to</span>
             <Input type="date" value={dateRange.endDate} onChange={e => setDateRange({...dateRange, endDate: e.target.value})} />
-            <Button variant="outline" onClick={() => handleDateFilterChange('today')}>Today</Button>
-            <Button variant="outline" onClick={() => handleDateFilterChange('week')}>This Week</Button>
-            <Button variant="outline" onClick={() => handleDateFilterChange('month')}>This Month</Button>
-            <Button variant="outline" onClick={() => handleDateFilterChange('year')}>This Year</Button>
+            <Button variant="outline" size="sm" onClick={() => handleDateFilterChange('today')}>Today</Button>
+            <Button variant="outline" size="sm" onClick={() => handleDateFilterChange('week')}>This Week</Button>
+            <Button variant="outline" size="sm" onClick={() => handleDateFilterChange('month')}>This Month</Button>
         </div>
       </header>
       
@@ -222,11 +256,11 @@ export default function ReportsPage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
             <Card>
                 <CardHeader><CardTitle>Total Revenue</CardTitle></CardHeader>
-                <CardContent><p className="text-2xl font-bold text-green-600">{metrics.totalRevenue.toLocaleString(undefined, {style:'currency', currency:'USD'})}</p></CardContent>
+                <CardContent><p className="text-2xl font-bold text-green-600">{metrics.totalRevenue.toLocaleString()} MMK</p></CardContent>
             </Card>
             <Card>
                 <CardHeader><CardTitle>Total Profit</CardTitle></CardHeader>
-                <CardContent><p className="text-2xl font-bold text-blue-600">{metrics.totalProfit.toLocaleString(undefined, {style:'currency', currency:'USD'})}</p></CardContent>
+                <CardContent><p className="text-2xl font-bold text-blue-600">{metrics.totalProfit.toLocaleString()} MMK</p></CardContent>
             </Card>
             <Card>
                 <CardHeader><CardTitle>Total Orders</CardTitle></CardHeader>
@@ -234,24 +268,25 @@ export default function ReportsPage() {
             </Card>
         </div>
 
-        <Card className="mb-6">
-            <CardHeader><CardTitle>Sales & Profit Trend</CardTitle></CardHeader>
-            <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                    <LineChart data={dailySales}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="date" />
-                        <YAxis />
-                        <Tooltip />
-                        <Line type="monotone" dataKey="revenue" stroke="#8884d8" name="Revenue" />
-                        <Line type="monotone" dataKey="profit" stroke="#82ca9d" name="Profit" />
-                    </LineChart>
-                </ResponsiveContainer>
-            </CardContent>
-        </Card>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <Card>
+                <CardHeader><CardTitle>Sales & Profit Trend</CardTitle></CardHeader>
+                <CardContent>
+                    <ResponsiveContainer width="100%" height={300}>
+                        <LineChart data={dailySales}><CartesianGrid /><XAxis dataKey="date" /><YAxis /><Tooltip formatter={(value: number) => `${value.toLocaleString()} MMK`} /><Line dataKey="revenue" name="Revenue" stroke="#8884d8"/><Line dataKey="profit" name="Profit" stroke="#82ca9d"/></LineChart>
+                    </ResponsiveContainer>
+                </CardContent>
+            </Card>
+            <Card>
+                <CardHeader><CardTitle>Top 5 Selling Products</CardTitle></CardHeader>
+                <CardContent>
+                    <ResponsiveContainer width="100%" height={300}>
+                        <BarChart data={topProducts} layout="vertical"><CartesianGrid /><XAxis type="number" hide /><YAxis type="category" dataKey="name" width={120} tick={{fontSize: 12}} /><Tooltip formatter={(value: number) => `${value.toLocaleString()} MMK`} /><Bar dataKey="revenue" name="Revenue" fill="#8884d8" /></BarChart>
+                    </ResponsiveContainer>
+                </CardContent>
+            </Card>
+        </div>
         
-        {/* Placeholder for other charts and tables */}
-
         <Card>
             <CardHeader className="flex-row justify-between items-center">
                 <CardTitle>Recent Sales</CardTitle>
@@ -262,22 +297,22 @@ export default function ReportsPage() {
                     <table className="min-w-full divide-y divide-gray-200">
                         <thead className="bg-gray-50">
                             <tr>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Sale No.</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Customer</th>
-                                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
-                                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Sale No.</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Customer</th>
+                                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
+                                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Actions</th>
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
                             {recentSales.map(sale => (
                                 <tr key={sale.id}>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{new Date(sale.created_at).toLocaleString()}</td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{sale.sale_number}</td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{sale.customers?.name || 'Walk-in'}</td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-green-600 font-semibold">{sale.total_amount.toLocaleString(undefined, {style:'currency', currency:'USD'})}</td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
-                                        <Button variant="link" size="sm" onClick={() => reprintReceipt(sale.id)}>Reprint</Button>
+                                    <td className="px-4 py-2 whitespace-nowrap text-sm">{new Date(sale.created_at).toLocaleString()}</td>
+                                    <td className="px-4 py-2 whitespace-nowrap text-sm font-medium">{sale.sale_number}</td>
+                                    <td className="px-4 py-2 whitespace-nowrap text-sm">{sale.customers?.name || 'Walk-in'}</td>
+                                    <td className="px-4 py-2 whitespace-nowrap text-sm text-right font-semibold">{sale.total_amount.toLocaleString()} MMK</td>
+                                    <td className="px-4 py-2 whitespace-nowrap text-sm text-center">
+                                        <Button variant="link" size="sm" onClick={() => reprintReceipt(sale)}>Reprint</Button>
                                     </td>
                                 </tr>
                             ))}
