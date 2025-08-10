@@ -2,36 +2,31 @@ import type { Metadata } from 'next'
 import { GeistSans } from 'geist/font/sans'
 import { GeistMono } from 'geist/font/mono'
 import './globals.css'
-import { AuthProvider } from '@/contexts/auth-context' // Make sure this path is correct
+import { AuthProvider } from '@/contexts/auth-context'
 
-// MODIFIED: Added the 'icons' property for the browser tab icon
+// Replace the icon with your chosen stock icon's Base64 encoded SVG
+const posIcon = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cmVjdCB4PSIxIiB5PSI0IiB3aWR0aD0iMjIiIGhlaWdodD0iMTYiIHJ4PSIyIiByeT0iMiI+PC9yZWN0PjxwYXRoIGQ9Ik0xIDExaDIyIj48L3BhdG4+PHBhdGggZD0iTTE2IDdIMjMiPjwvcGF0aD48L3N2Zz4='
+
 export const metadata: Metadata = {
-  title: 'POS System',
-  description: 'Created by Kyaw Zin Lin',
+  title: 'POS System',
+  description: 'Created by Kyaw Zin Lin',
   icons: {
-    // Using a self-contained SVG emoji as a clean, dependency-free stock icon (🧾)
-    icon: 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧾</text></svg>',
+    icon: posIcon,
   },
 }
 
 export default function RootLayout({
-  children,
+  children,
 }: Readonly<{
-  children: React.ReactNode
+  children: React.ReactNode
 }>) {
-  return (
-    // MODIFIED: Improved font handling by applying CSS variables to <html>
-    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
-      {/* The <head> tag is no longer needed here as metadata handles it */}
-      <body className={GeistSans.className}>
-        {/*
-          Assuming you want the AuthProvider to wrap your entire application,
-          which is standard practice.
-        */}
+  return (
+    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
+      <body className={GeistSans.className}>
         <AuthProvider>
           {children}
         </AuthProvider>
       </body>
-    </html>
-  )
+    </html>
+  )
 }
