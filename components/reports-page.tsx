@@ -66,13 +66,22 @@ export default function ReportsPage() {
   }, [dateRange])
 
   const fetchCompanyProfile = async () => {
-    const { data } = await supabase.from("company_profile").select("*").single()
-    if (data) setCompanyProfile(data as CompanyProfile)
+    const { data, error } = await supabase.from("company_profile").select("*").single()
+    if (error) {
+      console.error("Error fetching company profile:", error)
+    } else {
+      console.log("Company profile data:", data)
+      setCompanyProfile(data as CompanyProfile)
+    }
   }
 
   const fetchReportData = async () => {
     setLoading(true)
-    await Promise.all([fetchMetricsAndDailySales(), fetchTopProducts(), fetchRecentSales()])
+    try {
+      await Promise.all([fetchMetricsAndDailySales(), fetchTopProducts(), fetchRecentSales()])
+    } catch (error) {
+      console.error("Error fetching report data:", error)
+    }
     setLoading(false)
   }
 
@@ -89,6 +98,7 @@ export default function ReportsPage() {
       return
     }
 
+    console.log("Daily sales data:", data)
     const formattedData = data.map((d: any) => ({
       date: new Date(d.sale_day).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
       revenue: d.total_revenue,
@@ -111,6 +121,7 @@ export default function ReportsPage() {
     if (error) {
       console.error("Error fetching top products:", error)
     } else {
+      console.log("Top products data:", data)
       setTopProducts(data || [])
     }
   }
@@ -123,9 +134,11 @@ export default function ReportsPage() {
       .lte("created_at", `${dateRange.endDate}T23:59:59`)
       .order("created_at", { ascending: false })
       .limit(50)
+
     if (error) {
       console.error("Error fetching recent sales:", error)
     } else {
+      console.log("Recent sales data:", data)
       setRecentSales(data || [])
     }
   }
@@ -240,9 +253,9 @@ export default function ReportsPage() {
                 window.onload = function() { window.print(); window.onafterprint = function() { window.close(); } }
             </script>
         </body>
-    </html>`;
-    printWindow.document.write(receiptHTML);
-    printWindow.document.close();
+    </html>`
+    printWindow.document.write(receiptHTML)
+    printWindow.document.close()
   }
 
   if (loading) {
@@ -389,11 +402,7 @@ export default function ReportsPage() {
                         {sale.total_amount.toLocaleString()} MMK
                       </td>
                       <td className="px-4 py-2 whitespace-nowrap text-sm text-center">
-                        <Button
-                          variant="link"
-                          size="sm"
-                          onClick={() => reprintReceipt(sale)}
-                        >
+                        <Button variant="link" size="sm" onClick={() => reprintReceipt(sale)}>
                           Reprint
                         </Button>
                       </td>
