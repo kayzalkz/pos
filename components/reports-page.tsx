@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -7,7 +7,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { supabase } from "@/lib/supabase"
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from "recharts"
 import { 
     Download, 
     Loader2, 
@@ -19,8 +18,6 @@ import {
     FileText,
     Printer
 } from "lucide-react"
-import { useReactToPrint } from 'react-to-print';
-
 
 // Interfaces
 interface SaleTransaction {
@@ -36,6 +33,7 @@ interface SaleTransaction {
           id: string
           name: string
           cost: number
+          stock_quantity: number
       }
   }[]
 }
@@ -80,11 +78,9 @@ export default function ReportsPage() {
   const [productPerformanceData, setProductPerformanceData] = useState<ProductPerformance[]>([]);
   const [stockMovementData, setStockMovementData] = useState<StockMovement[]>([]);
 
-  const componentRef = useRef(null);
-  const handlePrint = useReactToPrint({
-    content: () => componentRef.current,
-    documentTitle: 'Report',
-  });
+  const handlePrint = () => {
+    window.print();
+  };
 
   useEffect(() => {
     fetchReportData()
@@ -129,7 +125,7 @@ export default function ReportsPage() {
     let totalPaid = 0;
     let totalCost = 0;
     const productSales: { [key: string]: ProductPerformance } = {};
-    const productStock: { [key: string]: { sold: number, initialStock: number, name: string, sku: string, revenue: number } } = {};
+    const productStock: { [key: string]: { productId: string, sold: number, initialStock: number, name: string, sku: string, revenue: number, currentStock: number } } = {};
 
     sales.forEach(sale => {
         totalRevenue += sale.total_amount;
@@ -154,24 +150,26 @@ export default function ReportsPage() {
                     profit: 0 
                 };
             }
+            const itemRevenue = item.quantity * (sale.total_amount / sale.sale_items.reduce((acc, i) => acc + i.quantity, 0)); // Approximate revenue per item
             productSales[product.id].quantity += item.quantity;
-            productSales[product.id].revenue += sale.total_amount; // This is simplistic, should be item total
+            productSales[product.id].revenue += itemRevenue;
             productSales[product.id].cost += saleCost;
-            productSales[product.id].profit += (sale.total_amount - saleCost); // Also simplistic
+            productSales[product.id].profit += (itemRevenue - saleCost);
 
             // For Stock Movement
             if (!productStock[product.id]) {
                  productStock[product.id] = { 
+                    productId: product.id,
                     sold: 0, 
-                    // @ts-ignore
                     initialStock: product.stock_quantity + item.quantity, // Approximation
                     name: product.name,
                     sku: '', // Assuming SKU needs to be fetched
-                    revenue: 0
+                    revenue: 0,
+                    currentStock: product.stock_quantity,
                 };
             }
             productStock[product.id].sold += item.quantity;
-            productStock[product.id].revenue += sale.total_amount; // Simplistic
+            productStock[product.id].revenue += itemRevenue;
         });
     });
 
@@ -184,17 +182,7 @@ export default function ReportsPage() {
     const perfData = Object.values(productSales).sort((a, b) => b.revenue - a.revenue);
     setProductPerformanceData(perfData);
 
-    const stockData = Object.values(productStock).map(p => ({
-        // @ts-ignore
-        productId: p.productId,
-        name: p.name,
-        sku: p.sku,
-        initialStock: p.initialStock,
-        sold: p.sold,
-        // @ts-ignore
-        currentStock: p.initialStock - p.sold,
-        revenue: p.revenue
-    }));
+    const stockData = Object.values(productStock);
     setStockMovementData(stockData);
   };
 
@@ -252,7 +240,7 @@ export default function ReportsPage() {
     }
 
     return (
-        <div ref={componentRef} className="p-4 sm:p-6 bg-gray-50">
+        <div className="p-4 sm:p-6 bg-gray-50">
             {/* Summary Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
                 <Card>
@@ -295,7 +283,7 @@ export default function ReportsPage() {
             
             {/* Reports Tabs */}
             <Tabs defaultValue="sales" className="space-y-6">
-                <TabsList className="grid w-full grid-cols-2 lg:grid-cols-4">
+                <TabsList className="grid w-full grid-cols-2 lg:grid-cols-4 no-print">
                     <TabsTrigger value="sales">Sales Report</TabsTrigger>
                     <TabsTrigger value="stock">Stock Report</TabsTrigger>
                     <TabsTrigger value="profit">Profit & Loss</TabsTrigger>
@@ -307,7 +295,7 @@ export default function ReportsPage() {
                     <Card>
                         <CardHeader className="flex flex-row items-center justify-between">
                             <CardTitle>Sales Transactions</CardTitle>
-                            <div className="flex gap-2">
+                            <div className="flex gap-2 no-print">
                                 <Button variant="outline" size="sm" onClick={() => exportToTxt('sales_report', salesData)}><FileText className="w-4 h-4 mr-2" /> TXT</Button>
                                 <Button variant="outline" size="sm" onClick={() => exportToCsv('sales_report', salesData)}><Download className="w-4 h-4 mr-2" /> CSV</Button>
                             </div>
@@ -346,7 +334,7 @@ export default function ReportsPage() {
                      <Card>
                         <CardHeader className="flex flex-row items-center justify-between">
                             <CardTitle>Stock Movement</CardTitle>
-                            <div className="flex gap-2">
+                            <div className="flex gap-2 no-print">
                                 <Button variant="outline" size="sm" onClick={() => exportToTxt('stock_movement', stockMovementData)}><FileText className="w-4 h-4 mr-2" /> TXT</Button>
                                 <Button variant="outline" size="sm" onClick={() => exportToCsv('stock_movement', stockMovementData)}><Download className="w-4 h-4 mr-2" /> CSV</Button>
                             </div>
@@ -387,7 +375,7 @@ export default function ReportsPage() {
                     <Card>
                         <CardHeader className="flex flex-row items-center justify-between">
                             <CardTitle>Profit & Loss by Product</CardTitle>
-                             <div className="flex gap-2">
+                             <div className="flex gap-2 no-print">
                                 <Button variant="outline" size="sm" onClick={() => exportToTxt('profit_loss', productPerformanceData)}><FileText className="w-4 h-4 mr-2" /> TXT</Button>
                                 <Button variant="outline" size="sm" onClick={() => exportToCsv('profit_loss', productPerformanceData)}><Download className="w-4 h-4 mr-2" /> CSV</Button>
                             </div>
@@ -426,7 +414,7 @@ export default function ReportsPage() {
                     <Card>
                         <CardHeader className="flex flex-row items-center justify-between">
                             <CardTitle>Product Performance</CardTitle>
-                             <div className="flex gap-2">
+                             <div className="flex gap-2 no-print">
                                 <Button variant="outline" size="sm" onClick={() => exportToTxt('product_performance', productPerformanceData)}><FileText className="w-4 h-4 mr-2" /> TXT</Button>
                                 <Button variant="outline" size="sm" onClick={() => exportToCsv('product_performance', productPerformanceData)}><Download className="w-4 h-4 mr-2" /> CSV</Button>
                             </div>
@@ -466,8 +454,28 @@ export default function ReportsPage() {
 
   return (
     <div className="flex-1 flex flex-col bg-gray-100 p-4 sm:p-6">
+        <style>{`
+            @media print {
+                body {
+                    background-color: white;
+                }
+                .no-print {
+                    display: none !important;
+                }
+                main {
+                    padding: 0;
+                    margin: 0;
+                    box-shadow: none;
+                    border: none;
+                }
+                .printable-area {
+                    padding: 0;
+                    margin: 0;
+                }
+            }
+        `}</style>
         {/* Main Header */}
-        <header className="mb-6">
+        <header className="mb-6 no-print">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4">
                 <h1 className="text-2xl font-bold text-gray-800 mb-2 sm:mb-0">Reports & Analytics</h1>
                 <div className="flex items-center space-x-2">
@@ -506,7 +514,7 @@ export default function ReportsPage() {
         </header>
 
         {/* Main Content Area */}
-        <main className="flex-1 bg-white p-6 rounded-lg shadow-sm">
+        <main className="flex-1 bg-white p-6 rounded-lg shadow-sm printable-area">
             {renderContent()}
         </main>
     </div>
