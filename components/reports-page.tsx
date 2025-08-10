@@ -3,8 +3,21 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { supabase } from "@/lib/supabase"
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts"
-import { Download, Loader2 } from "lucide-react"
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from "recharts"
+import { 
+    Download, 
+    Loader2, 
+    DollarSign, 
+    BarChart3, 
+    Users, 
+    PieChart, 
+    Archive, 
+    TrendingUp, 
+    LayoutDashboard, 
+    LineChart as LineChartIcon, 
+    AlertTriangle,
+    CalendarIcon
+} from "lucide-react"
 
 // Interfaces
 interface SaleTransaction {
@@ -44,8 +57,24 @@ interface CompanyProfile {
   logo_url: string
 }
 
+type ReportTab = 'salesReport' | 'productPerformance' | 'customerAnalysis' | 'categoryBreakdown' | 'inventoryStatus' | 'profitAnalysis' | 'summaryDashboard' | 'salesTrends' | 'lowStockAlert';
+
+const reportTabs: { id: ReportTab; label: string; icon: React.ElementType }[] = [
+    { id: 'salesReport', label: 'Sales Report', icon: DollarSign },
+    { id: 'productPerformance', label: 'Product Performance', icon: BarChart3 },
+    { id: 'customerAnalysis', label: 'Customer Analysis', icon: Users },
+    { id: 'categoryBreakdown', label: 'Category Breakdown', icon: PieChart },
+    { id: 'inventoryStatus', label: 'Inventory Status', icon: Archive },
+    { id: 'profitAnalysis', label: 'Profit Analysis', icon: TrendingUp },
+    { id: 'summaryDashboard', label: 'Summary Dashboard', icon: LayoutDashboard },
+    { id: 'salesTrends', label: 'Sales Trends', icon: LineChartIcon },
+    { id: 'lowStockAlert', label: 'Low Stock Alert', icon: AlertTriangle },
+];
+
+
 export default function ReportsPage() {
   const [loading, setLoading] = useState(true)
+  const [activeTab, setActiveTab] = useState<ReportTab>('salesReport');
   const [dateRange, setDateRange] = useState({
     startDate: new Date(new Date().getFullYear(), 0, 1).toISOString().split("T")[0],
     endDate: new Date().toISOString().split("T")[0],
@@ -62,15 +91,19 @@ export default function ReportsPage() {
   }, [])
 
   useEffect(() => {
-    fetchReportData()
-  }, [dateRange])
+    if (activeTab === 'salesReport') {
+        fetchReportData()
+    } else {
+        // Handle data fetching for other tabs here
+        setLoading(false);
+    }
+  }, [dateRange, activeTab])
 
   const fetchCompanyProfile = async () => {
     const { data, error } = await supabase.from("company_profile").select("*").single()
     if (error) {
       console.error("Error fetching company profile:", error)
     } else {
-      console.log("Company profile data:", data)
       setCompanyProfile(data as CompanyProfile)
     }
   }
@@ -98,7 +131,6 @@ export default function ReportsPage() {
       return
     }
 
-    console.log("Daily sales data:", data)
     const formattedData = data.map((d: any) => ({
       date: new Date(d.sale_day).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
       revenue: d.total_revenue,
@@ -121,7 +153,6 @@ export default function ReportsPage() {
     if (error) {
       console.error("Error fetching top products:", error)
     } else {
-      console.log("Top products data:", data)
       setTopProducts(data || [])
     }
   }
@@ -138,32 +169,27 @@ export default function ReportsPage() {
     if (error) {
       console.error("Error fetching recent sales:", error)
     } else {
-      console.log("Recent sales data:", data)
       setRecentSales(data || [])
     }
   }
 
-  const handleDateFilterChange = (filter: "today" | "week" | "month") => {
-    const endDate = new Date()
-    let startDate = new Date()
-    if (filter === "week") startDate.setDate(endDate.getDate() - 6)
-    else if (filter === "month") startDate.setDate(endDate.getDate() - 29)
-
-    setDateRange({
-      startDate: startDate.toISOString().split("T")[0],
-      endDate: endDate.toISOString().split("T")[0],
-    })
-  }
-
   const exportToCsv = (filename: string, data: any[]) => {
     if (!data || data.length === 0) {
-      alert("No data to export.")
+      // Using a custom modal or toast is better than alert
+      console.warn("No data to export.");
       return
     }
     const headers = Object.keys(data[0])
     const csvContent = [
       headers.join(","),
-      ...data.map((row) => headers.map((header) => JSON.stringify(row[header])).join(",")),
+      ...data.map((row) => headers.map((header) => {
+        const cell = row[header];
+        // Handle nested objects like customers
+        if (typeof cell === 'object' && cell !== null) {
+            return JSON.stringify(cell.name || '');
+        }
+        return JSON.stringify(cell);
+      }).join(",")),
     ].join("\n")
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" })
     const link = document.createElement("a")
@@ -182,7 +208,8 @@ export default function ReportsPage() {
       .select("*, products(*)")
       .eq("sale_id", sale.id)
     if (error || !saleItemsData) {
-      alert("Could not fetch sale details to reprint.")
+      // Use a better notification system than alert
+      console.error("Could not fetch sale details to reprint.");
       return
     }
 
@@ -258,162 +285,224 @@ export default function ReportsPage() {
     printWindow.document.close()
   }
 
-  if (loading) {
-    return (
-      <div className="flex-1 flex items-center justify-center h-full">
-        <Loader2 className="h-6 w-6 animate-spin mr-2" />
-        <span>Loading reports...</span>
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex-1 flex flex-col bg-gray-50">
-      <header className="bg-white p-4 border-b flex justify-between items-center">
-        <h1 className="text-xl font-semibold">Sales Reports</h1>
-        <div className="flex items-center space-x-2">
-          <Input
-            type="date"
-            value={dateRange.startDate}
-            onChange={(e) => setDateRange({ ...dateRange, startDate: e.target.value })}
-          />
-          <span>to</span>
-          <Input
-            type="date"
-            value={dateRange.endDate}
-            onChange={(e) => setDateRange({ ...dateRange, endDate: e.target.value })}
-          />
-          <Button variant="outline" size="sm" onClick={() => handleDateFilterChange("today")}>
-            Today
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => handleDateFilterChange("week")}>
-            This Week
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => handleDateFilterChange("month")}>
-            This Month
-          </Button>
-        </div>
-      </header>
-
-      <main className="flex-1 p-6 overflow-y-auto">
+  const renderSalesReport = () => (
+    <>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-          <Card>
+            <Card>
             <CardHeader>
-              <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
+                <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-2xl font-bold text-green-600">
+                <p className="text-2xl font-bold text-green-600">
                 {metrics.totalRevenue.toLocaleString()} MMK
-              </p>
+                </p>
             </CardContent>
-          </Card>
-          <Card>
+            </Card>
+            <Card>
             <CardHeader>
-              <CardTitle className="text-sm font-medium">Total Profit</CardTitle>
+                <CardTitle className="text-sm font-medium">Total Profit</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-2xl font-bold text-blue-600">
+                <p className="text-2xl font-bold text-blue-600">
                 {metrics.totalProfit.toLocaleString()} MMK
-              </p>
+                </p>
             </CardContent>
-          </Card>
-          <Card>
+            </Card>
+            <Card>
             <CardHeader>
-              <CardTitle className="text-sm font-medium">Total Orders</CardTitle>
+                <CardTitle className="text-sm font-medium">Total Orders</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-2xl font-bold text-purple-600">{metrics.totalOrders}</p>
+                <p className="text-2xl font-bold text-purple-600">{metrics.totalOrders}</p>
             </CardContent>
-          </Card>
+            </Card>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-          <Card>
+            <Card>
             <CardHeader>
-              <CardTitle>Sales & Profit Trend</CardTitle>
+                <CardTitle>Sales & Profit Trend</CardTitle>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
+                <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={dailySales}>
-                  <CartesianGrid />
-                  <XAxis dataKey="date" />
-                  <YAxis />
-                  <Tooltip formatter={(value: number) => `${value.toLocaleString()} MMK`} />
-                  <Line dataKey="revenue" name="Revenue" stroke="#8884d8" />
-                  <Line dataKey="profit" name="Profit" stroke="#82ca9d" />
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="date" />
+                    <YAxis />
+                    <Tooltip formatter={(value: number) => `${value.toLocaleString()} MMK`} />
+                    <Legend />
+                    <Line type="monotone" dataKey="revenue" name="Revenue" stroke="#16a34a" />
+                    <Line type="monotone" dataKey="profit" name="Profit" stroke="#2563eb" />
                 </LineChart>
-              </ResponsiveContainer>
+                </ResponsiveContainer>
             </CardContent>
-          </Card>
-          <Card>
+            </Card>
+            <Card>
             <CardHeader>
-              <CardTitle>Top 5 Selling Products</CardTitle>
+                <CardTitle>Top 5 Selling Products</CardTitle>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={topProducts} layout="vertical">
-                  <CartesianGrid />
-                  <XAxis type="number" hide />
-                  <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 12 }} interval={0} />
-                  <Tooltip formatter={(value: number) => `${value.toLocaleString()} MMK`} />
-                  <Bar dataKey="revenue" name="Revenue" fill="#8884d8" />
+                <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={topProducts} layout="vertical" margin={{ top: 5, right: 20, left: 80, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis type="number" hide />
+                    <YAxis type="category" dataKey="name" tick={{ fontSize: 12 }} interval={0} width={120} />
+                    <Tooltip formatter={(value: number) => `${value.toLocaleString()} MMK`} />
+                    <Legend />
+                    <Bar dataKey="revenue" name="Revenue" fill="#8884d8" />
                 </BarChart>
-              </ResponsiveContainer>
+                </ResponsiveContainer>
             </CardContent>
-          </Card>
+            </Card>
         </div>
 
         <Card>
-          <CardHeader className="flex-row justify-between items-center">
-            <CardTitle>Recent Sales</CardTitle>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => exportToCsv("recent_sales", recentSales)}
-            >
-              <Download className="w-4 h-4 mr-2" /> Export CSV
-            </Button>
-          </CardHeader>
-          <CardContent>
+            <CardHeader>
+                <CardTitle>Recent Sales</CardTitle>
+            </CardHeader>
+            <CardContent>
             <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
+                <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
-                  <tr>
+                    <tr>
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Sale No.</th>
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Customer</th>
                     <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
                     <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Actions</th>
-                  </tr>
+                    </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {recentSales.map((sale) => (
+                    {recentSales.map((sale) => (
                     <tr key={sale.id}>
-                      <td className="px-4 py-2 whitespace-nowrap text-sm">
+                        <td className="px-4 py-2 whitespace-nowrap text-sm">
                         {new Date(sale.created_at).toLocaleString()}
-                      </td>
-                      <td className="px-4 py-2 whitespace-nowrap text-sm font-medium">
+                        </td>
+                        <td className="px-4 py-2 whitespace-nowrap text-sm font-medium">
                         {sale.sale_number}
-                      </td>
-                      <td className="px-4 py-2 whitespace-nowrap text-sm">
+                        </td>
+                        <td className="px-4 py-2 whitespace-nowrap text-sm">
                         {sale.customers?.name || "Walk-in"}
-                      </td>
-                      <td className="px-4 py-2 whitespace-nowrap text-sm text-right font-semibold">
+                        </td>
+                        <td className="px-4 py-2 whitespace-nowrap text-sm text-right font-semibold">
                         {sale.total_amount.toLocaleString()} MMK
-                      </td>
-                      <td className="px-4 py-2 whitespace-nowrap text-sm text-center">
+                        </td>
+                        <td className="px-4 py-2 whitespace-nowrap text-sm text-center">
                         <Button variant="link" size="sm" onClick={() => reprintReceipt(sale)}>
-                          Reprint
+                            Reprint
                         </Button>
-                      </td>
+                        </td>
                     </tr>
-                  ))}
+                    ))}
                 </tbody>
-              </table>
+                </table>
             </div>
-          </CardContent>
+            </CardContent>
         </Card>
-      </main>
+    </>
+  );
+
+  const renderActiveTabContent = () => {
+    if (loading) {
+        return (
+            <div className="flex-1 flex items-center justify-center h-full min-h-[400px]">
+                <Loader2 className="h-6 w-6 animate-spin mr-2" />
+                <span>Loading report...</span>
+            </div>
+        )
+    }
+
+    switch (activeTab) {
+        case 'salesReport':
+            return renderSalesReport();
+        // Add cases for other reports here
+        default:
+            return (
+                <div className="flex items-center justify-center h-full min-h-[400px] text-gray-500">
+                    <p>{reportTabs.find(t => t.id === activeTab)?.label} is under construction.</p>
+                </div>
+            );
+    }
+  };
+
+
+  return (
+    <div className="flex-1 flex flex-col bg-gray-100 p-4 sm:p-6">
+        {/* Main Header */}
+        <header className="mb-6">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4">
+                <h1 className="text-2xl font-bold text-gray-800 mb-2 sm:mb-0">Reports & Analytics</h1>
+                <div className="flex items-center space-x-2">
+                    <Button 
+                        variant="outline" 
+                        className="bg-white"
+                        onClick={() => {
+                            if (activeTab === 'salesReport') {
+                                exportToCsv("sales_report", recentSales);
+                            }
+                            // Add logic for other tabs
+                        }}
+                    >
+                        <Download className="w-4 h-4 mr-2" /> Export
+                    </Button>
+                    <Button variant="link" className="text-sm">More options</Button>
+                </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+                <div className="relative">
+                    <CalendarIcon className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
+                    <Input
+                        type="date"
+                        value={dateRange.startDate}
+                        onChange={(e) => setDateRange({ ...dateRange, startDate: e.target.value })}
+                        className="pl-8 bg-white"
+                    />
+                </div>
+                <span>to</span>
+                <div className="relative">
+                    <CalendarIcon className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
+                    <Input
+                        type="date"
+                        value={dateRange.endDate}
+                        onChange={(e) => setDateRange({ ...dateRange, endDate: e.target.value })}
+                        className="pl-8 bg-white"
+                    />
+                </div>
+            </div>
+        </header>
+
+        {/* Report Tabs Navigation */}
+        <div className="mb-6 overflow-x-auto">
+            <div className="flex border-b border-gray-200">
+                {reportTabs.map(tab => (
+                    <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id)}
+                        className={`flex items-center px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors duration-200 ease-in-out
+                            ${activeTab === tab.id 
+                                ? 'border-b-2 border-blue-600 text-blue-600' 
+                                : 'text-gray-500 hover:text-gray-700'
+                            }`
+                        }
+                    >
+                        <tab.icon className="w-4 h-4 mr-2" />
+                        {tab.label}
+                    </button>
+                ))}
+            </div>
+        </div>
+
+        {/* Main Content Area */}
+        <main className="flex-1 bg-white p-6 rounded-lg shadow-sm">
+            <CardHeader className="p-0 mb-6">
+                <CardTitle className="text-xl font-semibold text-gray-800">
+                    {reportTabs.find(t => t.id === activeTab)?.label}
+                </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+                {renderActiveTabContent()}
+            </CardContent>
+        </main>
     </div>
   )
 }
