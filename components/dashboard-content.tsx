@@ -104,10 +104,7 @@ export default function DashboardContent({ setActiveItem }: { setActiveItem: (it
       {/* Header */}
       <div className="bg-white p-6 border-b border-gray-200 flex justify-between items-center">
         <h1 className="text-2xl font-semibold text-gray-800">Dashboard</h1>
-        <Button onClick={() => setActiveItem("Reports")} className="bg-red-600 hover:bg-red-700 text-white">
-          <FileText className="w-4 h-4 mr-2" />
-          Generate Report
-        </Button>
+        
       </div>
 
       {/* Dashboard Content */}
