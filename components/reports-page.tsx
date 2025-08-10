@@ -20,6 +20,19 @@ import {
 } from "lucide-react"
 
 // Interfaces
+interface SaleItem {
+    quantity: number;
+    unit_price: number;
+    total_price: number;
+    products: {
+        id: string;
+        name: string;
+        cost: number;
+        stock_quantity: number;
+        sku: string;
+    };
+}
+
 interface SaleTransaction {
   id: string
   sale_number: string
@@ -27,15 +40,7 @@ interface SaleTransaction {
   paid_amount: number
   created_at: string
   customers: { name: string } | null
-  sale_items: {
-      quantity: number
-      products: {
-          id: string
-          name: string
-          cost: number
-          stock_quantity: number
-      }
-  }[]
+  sale_items: SaleItem[]
 }
 
 interface ProductPerformance {
@@ -66,6 +71,16 @@ interface ReportMetrics {
   profitMargin: number
 }
 
+interface CompanyProfile {
+  company_name: string
+  address: string
+  phone: string
+  email: string
+  website: string
+  tax_number: string
+  logo_url: string
+}
+
 export default function ReportsPage() {
   const [loading, setLoading] = useState(true)
   const [dateRange, setDateRange] = useState({
@@ -77,14 +92,25 @@ export default function ReportsPage() {
   const [salesData, setSalesData] = useState<SaleTransaction[]>([]);
   const [productPerformanceData, setProductPerformanceData] = useState<ProductPerformance[]>([]);
   const [stockMovementData, setStockMovementData] = useState<StockMovement[]>([]);
+  const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null);
 
   const handlePrint = () => {
     window.print();
   };
 
   useEffect(() => {
-    fetchReportData()
+    fetchCompanyProfile();
+    fetchReportData();
   }, [dateRange])
+
+  const fetchCompanyProfile = async () => {
+    const { data, error } = await supabase.from("company_profile").select("*").single();
+    if (error) {
+        console.error("Error fetching company profile:", error);
+    } else {
+        setCompanyProfile(data);
+    }
+  };
 
   const fetchReportData = async () => {
     setLoading(true)
@@ -101,7 +127,9 @@ export default function ReportsPage() {
         customers (name),
         sale_items (
           quantity,
-          products (id, name, cost, stock_quantity)
+          unit_price,
+          total_price,
+          products (id, name, cost, stock_quantity, sku)
         )
       `)
       .gte("created_at", dateRange.startDate)
@@ -125,7 +153,7 @@ export default function ReportsPage() {
     let totalPaid = 0;
     let totalCost = 0;
     const productSales: { [key: string]: ProductPerformance } = {};
-    const productStock: { [key: string]: { productId: string, sold: number, initialStock: number, name: string, sku: string, revenue: number, currentStock: number } } = {};
+    const productStock: { [key: string]: { sold: number, name: string, sku: string, currentStock: number } } = {};
 
     sales.forEach(sale => {
         totalRevenue += sale.total_amount;
@@ -150,26 +178,21 @@ export default function ReportsPage() {
                     profit: 0 
                 };
             }
-            const itemRevenue = item.quantity * (sale.total_amount / sale.sale_items.reduce((acc, i) => acc + i.quantity, 0)); // Approximate revenue per item
             productSales[product.id].quantity += item.quantity;
-            productSales[product.id].revenue += itemRevenue;
+            productSales[product.id].revenue += item.total_price;
             productSales[product.id].cost += saleCost;
-            productSales[product.id].profit += (itemRevenue - saleCost);
+            productSales[product.id].profit += (item.total_price - saleCost);
 
             // For Stock Movement
             if (!productStock[product.id]) {
                  productStock[product.id] = { 
-                    productId: product.id,
                     sold: 0, 
-                    initialStock: product.stock_quantity + item.quantity, // Approximation
                     name: product.name,
-                    sku: '', // Assuming SKU needs to be fetched
-                    revenue: 0,
+                    sku: product.sku,
                     currentStock: product.stock_quantity,
                 };
             }
             productStock[product.id].sold += item.quantity;
-            productStock[product.id].revenue += itemRevenue;
         });
     });
 
@@ -182,9 +205,82 @@ export default function ReportsPage() {
     const perfData = Object.values(productSales).sort((a, b) => b.revenue - a.revenue);
     setProductPerformanceData(perfData);
 
-    const stockData = Object.values(productStock);
+    const stockData = Object.values(productStock).map(p => ({
+        productId: p.name, // This is a bug, should be a unique id
+        name: p.name,
+        sku: p.sku,
+        sold: p.sold,
+        currentStock: p.currentStock,
+        initialStock: p.currentStock + p.sold,
+        revenue: perfData.find(perf => perf.name === p.name)?.revenue || 0
+    }));
     setStockMovementData(stockData);
   };
+
+  const reprintReceipt = (sale: SaleTransaction) => {
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) return;
+
+    const receiptHTML = `
+    <html>
+        <head>
+        <title>Receipt - ${sale.sale_number}</title>
+        <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; max-width: 300px; margin: 0 auto; padding: 10px; background: white; }
+            .logo-container { text-align: center; margin-bottom: 10px; }
+            .logo-container img { max-width: 120px; max-height: 80px; object-fit: contain; }
+            .receipt-header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 15px; }
+            .company-name { font-size: 16px; font-weight: bold; margin-bottom: 5px; text-transform: uppercase; }
+            .company-info { font-size: 10px; line-height: 1.3; margin-bottom: 8px; }
+            .sale-info { margin-bottom: 10px; font-size: 11px; }
+            .sale-info div { display: flex; justify-content: space-between; margin-bottom: 2px; }
+            .items-section { border-top: 1px dashed #000; border-bottom: 1px dashed #000; padding: 10px 0; margin: 15px 0; }
+            .item-header, .item { display: flex; justify-content: space-between; }
+            .item-header span:first-child, .item .item-name { flex-grow: 1; text-align: left; margin-right: 5px; word-break: break-word; }
+            .item-header span:nth-child(2), .item .item-qty { width: 35px; text-align: center; flex-shrink: 0; }
+            .item-header span:last-child, .item .item-price { width: 70px; text-align: right; flex-shrink: 0; }
+            .item-header { font-weight: bold; margin-bottom: 5px; font-size: 10px; text-transform: uppercase; }
+            .item { margin-bottom: 3px; font-size: 11px; }
+            .totals-section { margin-top: 15px; }
+            .total-line { font-weight: bold; font-size: 13px; border-top: 1px solid #000; padding-top: 5px; margin-top: 8px; display: flex; justify-content: space-between; }
+        </style>
+        </head>
+        <body>
+            ${companyProfile?.logo_url ? `<div class="logo-container"><img src="${companyProfile.logo_url}" alt="Company Logo"></div>` : ""}
+            <div class="receipt-header">
+                <div class="company-name">${companyProfile?.company_name || "Your Company"}</div>
+                <div class="company-info">${companyProfile?.address || ""}</div>
+            </div>
+            <div class="sale-info">
+                <div><span>Voucher:</span><span>${sale.sale_number}</span></div>
+                <div><span>Date:</span><span>${new Date(sale.created_at).toLocaleString()}</span></div>
+                ${sale.customers ? `<div><span>Customer:</span><span>${sale.customers.name}</span></div>` : ""}
+            </div>
+            <div class="items-section">
+                <div class="item-header"><span>ITEM</span><span>QTY</span><span>AMOUNT</span></div>
+                ${sale.sale_items.map((item: SaleItem) => `
+                    <div class="item">
+                        <span class="item-name">${item.products.name}</span>
+                        <span class="item-qty">${item.quantity}</span>
+                        <span class="item-price">${item.total_price.toLocaleString()}</span>
+                    </div>
+                `).join("")}
+            </div>
+            <div class="totals-section">
+                <div class="total-line">
+                    <span>TOTAL:</span>
+                    <span>${sale.total_amount.toLocaleString()} MMK</span>
+                </div>
+            </div>
+            <script>
+                window.onload = function() { window.print(); window.onafterprint = function() { window.close(); } }
+            </script>
+        </body>
+    </html>`;
+    printWindow.document.write(receiptHTML);
+    printWindow.document.close();
+  }
 
   const exportToCsv = (filename: string, data: any[]) => {
     if (!data || data.length === 0) {
@@ -310,6 +406,7 @@ export default function ReportsPage() {
                                         <TableHead className="text-right">Total</TableHead>
                                         <TableHead className="text-right">Paid</TableHead>
                                         <TableHead className="text-right">Outstanding</TableHead>
+                                        <TableHead className="text-center">Actions</TableHead>
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
@@ -321,6 +418,11 @@ export default function ReportsPage() {
                                             <TableCell className="text-right">{sale.total_amount.toLocaleString()}</TableCell>
                                             <TableCell className="text-right">{sale.paid_amount.toLocaleString()}</TableCell>
                                             <TableCell className="text-right text-red-500">{(sale.total_amount - sale.paid_amount).toLocaleString()}</TableCell>
+                                            <TableCell className="text-center">
+                                                <Button variant="link" size="sm" onClick={() => reprintReceipt(sale)}>
+                                                    Reprint
+                                                </Button>
+                                            </TableCell>
                                         </TableRow>
                                     ))}
                                 </TableBody>
