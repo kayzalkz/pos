@@ -313,7 +313,7 @@ export default function ProductsPage() {
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-gray-50">
+    <div className="flex-1 flex flex-col bg-gray-50 h-screen">
       <header className="bg-white p-6 border-b border-gray-200 flex justify-between items-center sticky top-0 z-10">
         <h1 className="text-2xl font-semibold text-gray-800">Products Management</h1>
         <Button onClick={handleAddProduct} className="bg-emerald-600 hover:bg-emerald-700">
@@ -322,8 +322,9 @@ export default function ProductsPage() {
         </Button>
       </header>
 
-      <main className="flex-1 p-6 flex flex-col">
-        <Card className="mb-6">
+      {/* MODIFIED: This is the main change for the scrollable layout */}
+      <main className="flex-1 p-6 flex flex-col min-h-0">
+        <Card className="mb-6 shrink-0">
           <CardContent className="p-4">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -337,8 +338,8 @@ export default function ProductsPage() {
           </CardContent>
         </Card>
 
-        {/* MODIFIED: This div is now scrollable */}
-        <div className="flex-1 overflow-y-auto pr-2">
+        {/* This div is now the scrollable container */}
+        <div className="flex-1 overflow-y-auto pr-2 -mr-2">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             {filteredProducts.map((product) => (
                 <Card key={product.id} className="hover:shadow-lg transition-shadow flex flex-col bg-white">
