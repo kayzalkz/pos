@@ -139,7 +139,6 @@ export default function ProductsPage() {
       (product.sku || "").toLowerCase().includes(searchTerm.toLowerCase()),
   )
 
-  // MODIFIED: handleSubmit now sanitizes the filename before upload
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setSubmitting(true)
@@ -151,10 +150,9 @@ export default function ProductsPage() {
         const fileExt = imageFile.name.split('.').pop()
         const fileNameWithoutExt = imageFile.name.substring(0, imageFile.name.lastIndexOf('.'))
         
-        // This is the new sanitization logic
         const sanitizedFileName = fileNameWithoutExt
-            .replace(/\s+/g, '-')           // Replace spaces with hyphens
-            .replace(/[^a-zA-Z0-9-]/g, ''); // Remove all non-alphanumeric characters except hyphens
+            .replace(/\s+/g, '-')
+            .replace(/[^a-zA-Z0-9-]/g, '');
 
         const uniqueFileName = `${Date.now()}-${sanitizedFileName}.${fileExt}`;
         const filePath = `public/${uniqueFileName}`;
@@ -324,7 +322,7 @@ export default function ProductsPage() {
         </Button>
       </header>
 
-      <main className="flex-1 p-6 overflow-y-auto">
+      <main className="flex-1 p-6 flex flex-col">
         <Card className="mb-6">
           <CardContent className="p-4">
             <div className="relative">
@@ -339,78 +337,81 @@ export default function ProductsPage() {
           </CardContent>
         </Card>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          {filteredProducts.map((product) => (
-            <Card key={product.id} className="hover:shadow-lg transition-shadow flex flex-col bg-white">
-              <CardHeader>
-                <div className="flex justify-between items-start gap-4">
-                    <img src={product.image_url || 'https://placehold.co/100'} alt={product.name} className="w-20 h-20 rounded-md object-cover border"/>
-                    <div className="flex-1">
-                        <CardTitle className="text-lg leading-tight">{product.name}</CardTitle>
-                        <p className="text-sm text-gray-500">SKU: {product.sku}</p>
+        {/* MODIFIED: This div is now scrollable */}
+        <div className="flex-1 overflow-y-auto pr-2">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            {filteredProducts.map((product) => (
+                <Card key={product.id} className="hover:shadow-lg transition-shadow flex flex-col bg-white">
+                <CardHeader>
+                    <div className="flex justify-between items-start gap-4">
+                        <img src={product.image_url || 'https://placehold.co/100'} alt={product.name} className="w-20 h-20 rounded-md object-cover border"/>
+                        <div className="flex-1">
+                            <CardTitle className="text-lg leading-tight">{product.name}</CardTitle>
+                            <p className="text-sm text-gray-500">SKU: {product.sku}</p>
+                        </div>
+                    <Badge variant={product.is_active ? "default" : "destructive"}>
+                        {product.is_active ? "Active" : "Inactive"}
+                    </Badge>
                     </div>
-                  <Badge variant={product.is_active ? "default" : "destructive"}>
-                    {product.is_active ? "Active" : "Inactive"}
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-3 text-sm flex-grow">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Selling Price:</span>
-                  <span className="font-medium">{formatPrice(product.selling_price)} MMK</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Stock:</span>
-                  <span
-                    className={`font-medium ${formatNumber(product.stock_quantity) <= formatNumber(product.min_stock_level) ? "text-red-600" : "text-green-600"}`}
-                  >
-                    {formatNumber(product.stock_quantity)} {product.unit}
-                  </span>
-                </div>
-                {product.categories && (
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Category:</span>
-                    <span className="text-gray-800">{product.categories.name}</span>
-                  </div>
-                )}
-                {product.brands && (
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Brand:</span>
-                    <span className="text-gray-800">{product.brands.name}</span>
-                  </div>
-                )}
-              </CardContent>
-              <div className="p-4 pt-0 mt-auto flex space-x-2">
-                  <Button size="sm" variant="outline" onClick={() => handleEdit(product)} className="flex-1">
-                    <Edit className="w-3 h-3 mr-2" />
-                    Edit
-                  </Button>
-                  <Button size="icon" variant="destructive" onClick={() => handleDelete(product)}>
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
-            </Card>
-          ))}
-        </div>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm flex-grow">
+                    <div className="flex justify-between">
+                    <span className="text-gray-600">Selling Price:</span>
+                    <span className="font-medium">{formatPrice(product.selling_price)} MMK</span>
+                    </div>
+                    <div className="flex justify-between">
+                    <span className="text-gray-600">Stock:</span>
+                    <span
+                        className={`font-medium ${formatNumber(product.stock_quantity) <= formatNumber(product.min_stock_level) ? "text-red-600" : "text-green-600"}`}
+                    >
+                        {formatNumber(product.stock_quantity)} {product.unit}
+                    </span>
+                    </div>
+                    {product.categories && (
+                    <div className="flex justify-between">
+                        <span className="text-gray-600">Category:</span>
+                        <span className="text-gray-800">{product.categories.name}</span>
+                    </div>
+                    )}
+                    {product.brands && (
+                    <div className="flex justify-between">
+                        <span className="text-gray-600">Brand:</span>
+                        <span className="text-gray-800">{product.brands.name}</span>
+                    </div>
+                    )}
+                </CardContent>
+                <div className="p-4 pt-0 mt-auto flex space-x-2">
+                    <Button size="sm" variant="outline" onClick={() => handleEdit(product)} className="flex-1">
+                        <Edit className="w-3 h-3 mr-2" />
+                        Edit
+                    </Button>
+                    <Button size="icon" variant="destructive" onClick={() => handleDelete(product)}>
+                        <Trash2 className="w-4 h-4" />
+                    </Button>
+                    </div>
+                </Card>
+            ))}
+            </div>
 
-        {filteredProducts.length === 0 && !loading && (
-          <Card>
-            <CardContent className="p-8 text-center">
-              <Package className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-              <p className="text-gray-500">
-                {searchTerm
-                  ? "No products found matching your search."
-                  : "No products exist. Add your first product to get started."}
-              </p>
-            </CardContent>
-          </Card>
-        )}
+            {filteredProducts.length === 0 && !loading && (
+            <Card>
+                <CardContent className="p-8 text-center">
+                <Package className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                <p className="text-gray-500">
+                    {searchTerm
+                    ? "No products found matching your search."
+                    : "No products exist. Add your first product to get started."}
+                </p>
+                </CardContent>
+            </Card>
+            )}
+        </div>
       </main>
 
       <Dialog open={isDialogOpen} onOpenChange={handleDialogClose}>
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>{editingProduct ? "Edit Product" : "Add New Product"}</DialogTitle>
+                <DialogTitle>{editingProduct ? "Edit Product" : "Add New Product"}</DialogTitle>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-6 pt-4">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
