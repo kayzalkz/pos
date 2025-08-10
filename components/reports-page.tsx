@@ -40,7 +40,6 @@ interface CompanyProfile {
 export default function ReportsPage() {
   const [loading, setLoading] = useState(true)
   const [dateRange, setDateRange] = useState({
-    // MODIFIED: Default date range is now the beginning of the year to ensure data is visible
     startDate: new Date(new Date().getFullYear(), 0, 1).toISOString().split("T")[0],
     endDate: new Date().toISOString().split("T")[0],
   })
