@@ -40,7 +40,8 @@ interface CompanyProfile {
 export default function ReportsPage() {
   const [loading, setLoading] = useState(true)
   const [dateRange, setDateRange] = useState({
-    startDate: new Date(new Date().setDate(new Date().getDate() - 29)).toISOString().split("T")[0],
+    // MODIFIED: Default date range is now the beginning of the year to ensure data is visible
+    startDate: new Date(new Date().getFullYear(), 0, 1).toISOString().split("T")[0],
     endDate: new Date().toISOString().split("T")[0],
   })
   
@@ -52,6 +53,9 @@ export default function ReportsPage() {
 
   useEffect(() => {
     fetchCompanyProfile();
+  }, [])
+
+  useEffect(() => {
     fetchReportData()
   }, [dateRange])
   
@@ -131,7 +135,10 @@ export default function ReportsPage() {
   };
 
   const exportToCsv = (filename: string, data: any[]) => {
-    if (!data || data.length === 0) return;
+    if (!data || data.length === 0) {
+      alert("No data to export.");
+      return;
+    }
     const headers = Object.keys(data[0]);
     const csvContent = [
         headers.join(','),
@@ -178,7 +185,6 @@ export default function ReportsPage() {
             .receipt-header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 15px; }
             .company-name { font-size: 16px; font-weight: bold; margin-bottom: 5px; text-transform: uppercase; }
             .company-info { font-size: 10px; line-height: 1.3; margin-bottom: 8px; }
-            .receipt-title { font-size: 14px; font-weight: bold; margin: 8px 0; text-transform: uppercase; }
             .sale-info { margin-bottom: 10px; font-size: 11px; }
             .sale-info div { display: flex; justify-content: space-between; margin-bottom: 2px; }
             .items-section { border-top: 1px dashed #000; border-bottom: 1px dashed #000; padding: 10px 0; margin: 15px 0; }
@@ -189,8 +195,7 @@ export default function ReportsPage() {
             .item-header { font-weight: bold; margin-bottom: 5px; font-size: 10px; text-transform: uppercase; }
             .item { margin-bottom: 3px; font-size: 11px; }
             .totals-section { margin-top: 15px; }
-            .total-line { display: flex; justify-content: space-between; margin-bottom: 3px; font-size: 11px; }
-            .total-line.grand-total { font-weight: bold; font-size: 13px; border-top: 1px solid #000; padding-top: 5px; margin-top: 8px; }
+            .total-line { font-weight: bold; font-size: 13px; border-top: 1px solid #000; padding-top: 5px; margin-top: 8px; display: flex; justify-content: space-between; }
         </style>
         </head>
         <body>
@@ -215,7 +220,7 @@ export default function ReportsPage() {
                 `).join("")}
             </div>
             <div class="totals-section">
-                <div class="total-line grand-total">
+                <div class="total-line">
                     <span>TOTAL:</span>
                     <span>${sale.total_amount.toLocaleString()} MMK</span>
                 </div>
@@ -231,7 +236,7 @@ export default function ReportsPage() {
   
   if (loading) {
       return (
-        <div className="flex-1 flex items-center justify-center">
+        <div className="flex-1 flex items-center justify-center h-full">
             <Loader2 className="h-6 w-6 animate-spin mr-2" />
             <span>Loading reports...</span>
         </div>
@@ -255,15 +260,15 @@ export default function ReportsPage() {
       <main className="flex-1 p-6 overflow-y-auto">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
             <Card>
-                <CardHeader><CardTitle>Total Revenue</CardTitle></CardHeader>
+                <CardHeader><CardTitle className="text-sm font-medium">Total Revenue</CardTitle></CardHeader>
                 <CardContent><p className="text-2xl font-bold text-green-600">{metrics.totalRevenue.toLocaleString()} MMK</p></CardContent>
             </Card>
             <Card>
-                <CardHeader><CardTitle>Total Profit</CardTitle></CardHeader>
+                <CardHeader><CardTitle className="text-sm font-medium">Total Profit</CardTitle></CardHeader>
                 <CardContent><p className="text-2xl font-bold text-blue-600">{metrics.totalProfit.toLocaleString()} MMK</p></CardContent>
             </Card>
             <Card>
-                <CardHeader><CardTitle>Total Orders</CardTitle></CardHeader>
+                <CardHeader><CardTitle className="text-sm font-medium">Total Orders</CardTitle></CardHeader>
                 <CardContent><p className="text-2xl font-bold text-purple-600">{metrics.totalOrders}</p></CardContent>
             </Card>
         </div>
@@ -281,7 +286,7 @@ export default function ReportsPage() {
                 <CardHeader><CardTitle>Top 5 Selling Products</CardTitle></CardHeader>
                 <CardContent>
                     <ResponsiveContainer width="100%" height={300}>
-                        <BarChart data={topProducts} layout="vertical"><CartesianGrid /><XAxis type="number" hide /><YAxis type="category" dataKey="name" width={120} tick={{fontSize: 12}} /><Tooltip formatter={(value: number) => `${value.toLocaleString()} MMK`} /><Bar dataKey="revenue" name="Revenue" fill="#8884d8" /></BarChart>
+                        <BarChart data={topProducts} layout="vertical"><CartesianGrid /><XAxis type="number" hide /><YAxis type="category" dataKey="name" width={120} tick={{fontSize: 12}} interval={0} /><Tooltip formatter={(value: number) => `${value.toLocaleString()} MMK`} /><Bar dataKey="revenue" name="Revenue" fill="#8884d8" /></BarChart>
                     </ResponsiveContainer>
                 </CardContent>
             </Card>
