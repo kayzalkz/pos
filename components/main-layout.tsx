@@ -23,7 +23,7 @@ import SuppliersPage from "./suppliers-page"
 import InventoryPage from "./inventory-page"
 import CreditDebitPage from "./credit-debit-page"
 import UsersPage from "./users-page"
-import DashboardContent from "./dashboard-content"
+import DashboardContent from "./dashboard-main"
 import DataManagementPage from "./data-management-page"
 
 export default function MainLayout() {
