@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
 import { supabase } from "@/lib/supabase"
 import { useAuth } from "@/contexts/auth-context"
-import { Search, Warehouse, AlertTriangle, Plus, Loader2 } from "lucide-react"
+import { Search, Warehouse, AlertTriangle, Loader2 } from "lucide-react"
 
 interface Product {
   id: string
@@ -30,7 +30,7 @@ interface InventoryAdjustment {
   notes: string | null
   created_at: string
   products: { name: string; sku: string }
-  users: { username: string } | null // User can be null
+  users: { username: string } | null // User can be null if deleted
 }
 
 export default function InventoryPage() {
@@ -60,12 +60,15 @@ export default function InventoryPage() {
   }
 
   const fetchProducts = async () => {
-    const { data } = await supabase.from("products").select("id, name, sku, stock_quantity, min_stock_level").order("name")
+    const { data } = await supabase
+      .from("products")
+      .select("id, name, sku, stock_quantity, min_stock_level")
+      .order("name")
     if (data) setProducts(data)
   }
 
   const fetchAdjustments = async () => {
-    // MODIFIED: Correctly performs a LEFT JOIN on users so it doesn't fail if the user is deleted.
+    // MODIFIED: This query is safer and won't fail if a user is deleted.
     const { data } = await supabase
       .from("inventory_adjustments")
       .select(`*, products!inner(name, sku), users(username)`)
@@ -80,6 +83,7 @@ export default function InventoryPage() {
       product.sku.toLowerCase().includes(searchTerm.toLowerCase()),
   )
 
+  // MODIFIED: This function now correctly waits for data to refresh.
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedProduct || !user) return
@@ -107,8 +111,11 @@ export default function InventoryPage() {
           .eq("id", selectedProduct.id)
 
         setIsDialogOpen(false)
+        
+        // THIS IS THE FIX: We now 'await' the data fetches to ensure they
+        // complete before the function finishes.
         await fetchProducts()
-        await fetchAdjustments() // THIS IS THE FIX: Refresh the adjustments list after submitting
+        await fetchAdjustments() 
     } catch (error) {
         console.error("Error submitting adjustment:", error);
         alert("Failed to submit adjustment.");
@@ -128,7 +135,12 @@ export default function InventoryPage() {
   }
 
   if (loading) {
-      return <div className="flex h-full items-center justify-center"><Loader2 className="h-6 w-6 animate-spin" /></div>
+      return (
+        <div className="flex-1 flex items-center justify-center h-full">
+            <Loader2 className="h-6 w-6 animate-spin mr-2" />
+            <span>Loading Inventory...</span>
+        </div>
+      )
   }
 
   return (
@@ -184,6 +196,9 @@ export default function InventoryPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-3 max-h-[75vh] overflow-y-auto">
+                {adjustments.length === 0 && (
+                    <p className="text-center text-gray-500 pt-10">No recent adjustments found.</p>
+                )}
                 {adjustments.map((adj) => (
                   <div key={adj.id} className="p-3 border rounded-lg">
                     <div className="flex items-start justify-between mb-2">
@@ -207,7 +222,7 @@ export default function InventoryPage() {
           </Card>
         </div>
 
-        <Dialog open={isDialogOpen} onOpenChange={(open) => { if (!open) setSelectedProduct(null); setIsDialogOpen(open); }}>
+        <Dialog open={isDialogOpen} onOpenChange={(open) => { if (!open) { setSelectedProduct(null); resetForm(); } setIsDialogOpen(open); }}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Adjust Inventory - {selectedProduct?.name}</DialogTitle>
